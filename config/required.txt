@@ -5,7 +5,8 @@
 
 # ---- SukiSU Nova (in-tree) ----------------------------------------------------------------------------
 CONFIG_KSU=y
-CONFIG_KPM=y
+# KPM disabled (owner 2026-11-16): first full build did not boot, KPM patches kernel code at runtime
+CONFIG_KPM=n
 CONFIG_KSU_LSM_SECURITY_HOOKS=y
 CONFIG_KSU_FEATURE_ADBROOT=y
 

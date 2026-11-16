@@ -145,6 +145,12 @@ jobs:
           cp anykernel/anykernel.sh "$WORK/AnyKernel3/anykernel.sh"
           cp "$KROOT/bazel-bin/common/kernel_aarch64/Image" "$WORK/AnyKernel3/Image"
           mkdir -p "$WORK/AnyKernel3/ramdisk" "$WORK/AnyKernel3/patch"
+          # the OnePlus 15R cannot run 32-bit binaries: every bundled tool must be 64-bit arm (aarch64)
+          for f in "$WORK/AnyKernel3"/tools/*; do
+            [ "$(head -c4 "$f" | od -An -tx1 | tr -d ' ')" = 7f454c46 ] || continue
+            [ "$(od -An -j4 -N1 -tu1 "$f" | tr -d ' ')" = 2 ] && [ "$(od -An -j18 -N2 -tu2 "$f" | tr -d ' ')" = 183 ] \
+              || { echo "::error::$(basename "$f") in AnyKernel3 is not an aarch64 binary"; exit 1; }
+          done
           NAME="SukiSU-Nova-OP15R-6.12.69-$(date -u +%Y%m%d)"
           echo "ZIPNAME=$NAME" >> "$GITHUB_ENV"
           (cd "$WORK/AnyKernel3" && zip -r9q "$OUT/$NAME-AnyKernel3.zip" . -x '.git*')
