@@ -169,14 +169,12 @@ say "8/10 Unicode bypass fix (experimental, WildKernels)"
 apply_patch "$WP/unicode_bypass_fix_6.1+.patch"
 
 # --------------------------------------------------------------------------------------------------------
-say "9/10 networking: BBRv3"
-if grep -q 'inflight_hi' net/ipv4/tcp_bbr.c; then
-  echo "tcp_bbr.c already carries BBRv3 (inflight_hi present): not patching"
-  echo "bbr=in-tree-v3" > "$WORK/bbr-mode"
-else
-  apply_patch "$WP/bbrv3/0001-net-tcp-backport-BBRv3-to-android16-6.12.patch"
-  echo "bbr=patched" > "$WORK/bbr-mode"
-fi
+say "9/10 networking: CIFS and BBR"
+# BBRv1 is the in-tree tcp_bbr. The BBRv3 backport (kernel_patches/common/bbrv3) is NOT applied: WildKernels disables it
+# on android16-6.12 too, and it changes kABI-covered structures (tcp_sock, tcp_skb_cb, rate_sample) that the phone's
+# prebuilt vendor modules were compiled against; the module CRC bypass would hide a layout mismatch.
+# CIFS=y pulls NETFS_SUPPORT=y; Kleaf fails if its GKI module list still names fs/netfs/netfs.ko.
+python3 "$WILD_SCRIPTS/cifs_modules_fix.py" "$PWD" fs/netfs/netfs.ko
 
 # --------------------------------------------------------------------------------------------------------
 say "10/10 tuning patches (memory, I/O, scheduler, network)"

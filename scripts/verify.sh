@@ -15,7 +15,7 @@ CFG=$(find bazel-bin/common -name .config -path '*kernel_aarch64*' 2>/dev/null |
 IMG=bazel-bin/common/kernel_aarch64/Image
 SYMVERS=$(find bazel-bin/common -name Module.symvers 2>/dev/null | head -1)
 [ -f "$CFG" ] || { echo "FAIL: final .config not found"; exit 1; }
-[ -f "$IMG" ] || { echo "FAIL: Image not found"; exit 1; }
+[ -f "$IMG" ] || [ "${CONFIG_ONLY:-0}" = 1 ] || { echo "FAIL: Image not found"; exit 1; }
 cp "$CFG" "$OUT/final.config"
 [ -n "$SYMVERS" ] && cp "$SYMVERS" "$OUT/Module.symvers"
 echo "final config: $CFG"
@@ -31,7 +31,6 @@ while IFS= read -r line; do
     *) grep -qx "${key}=${val}" "$CFG" || bad "$key=$val not in final config ($(grep -E "^${key}=" "$CFG" || echo absent))" ;;
   esac
 done < "$HERE/config/required.txt"
-if grep -qx 'CONFIG_TCP_CONG_BBR3=y' "$OUT/final.config" 2>/dev/null; then echo "BBRv3 algorithm: present"; else echo "BBRv3 algorithm: $(cat "${WORK:-/nonexistent}/bbr-mode" 2>/dev/null || echo unknown)"; fi
 echo "$n options checked"
 
 say "2. LTO"
@@ -53,18 +52,25 @@ done
 echo "LSMs enabled in config: $slots"
 grep -q 'BBG_ENABLED' include/linux/lsm_count.h 2>/dev/null || grep -q 'BBG_ENABLED' common/include/linux/lsm_count.h || bad "BBG not counted in MAX_LSM_COUNT"
 
+if [ "${CONFIG_ONLY:-0}" = 1 ]; then
+  [ "$fail" = 0 ] && echo "CONFIG CHECKS PASSED" || { echo "CONFIG CHECKS FAILED"; exit 1; }
+  exit 0
+fi
+
 say "4. Image contents"
 python3 -I - "$IMG" "$STOCK_RELEASE" <<'PY' || fail=1
 import re, sys
 img = open(sys.argv[1], "rb").read()
 stock = sys.argv[2]
 ok = True
-m = re.search(rb"Linux version (\S+)", img)
+m = re.search(rb"Linux version (6\.\S+)", img)
 rel = m.group(1).decode() if m else None
 print("built release :", rel)
 print("stock release :", stock)
-if rel != stock:
-    print("NOTE: release string differs from stock (modules with CRCs ignore the version token in vermagic)")
+if not (rel or "").startswith("6.12.69-android16-6"):
+    print("FAIL: release string does not start with 6.12.69-android16-6"); ok = False
+elif rel != stock:
+    print("NOTE: release differs from stock (modules with CRCs ignore the version token in vermagic)")
 for needle, why in [(b"susfs", "SUSFS"), (b"nomount", "NoMount"), (b"baseband_guard", "Baseband Guard"),
                     (b"ntsync", "NTSync"), (b"com.sukisu.nova", "Nova manager package"),
                     (b"947ae944f3de4ed4c21a7e4f7953ecf351bfa2b36239da37a34111ad29993eef", "Nova manager signature hash")]:

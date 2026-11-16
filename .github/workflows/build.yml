@@ -21,8 +21,13 @@ on:
 permissions:
   contents: write
 
+# every run step gets bash -eo pipefail, so `verify.sh | tee` cannot hide a failure
+defaults:
+  run:
+    shell: bash
+
 concurrency:
-  group: build-${{ github.ref }}
+  group: build-${{ github.ref }}-${{ inputs.stage }}-${{ inputs.lto }}
   cancel-in-progress: false
 
 env:
@@ -67,6 +72,21 @@ jobs:
       - name: Integrate SukiSU Nova, SUSFS, NoMount, Baseband Guard, NTSync, tuning
         run: bash scripts/integrate.sh
 
+      - name: Fetch the SukiSU Nova manager and check it matches the kernel's trusted certificate
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq apksigner
+          mkdir -p "$WORK/manager" "$OUT"
+          gh release download --repo SukiSU-Nova/SukiSU-Nova --pattern 'SukiSU_Nova_v*-release.apk' --dir "$WORK/manager" --clobber
+          APK=$(ls "$WORK/manager"/*.apk | head -1)
+          CERT=$(apksigner verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          WANT=$(sed -n 's/^KSU_EXPECTED_HASH := //p' "$KROOT/KernelSU/kernel/Makefile")
+          echo "manager: $(basename "$APK")"; echo "apk cert : $CERT"; echo "kernel   : $WANT"
+          [ -n "$CERT" ] && [ "$CERT" = "$WANT" ] || { echo "::error::manager APK certificate does not match the kernel's compiled-in one"; exit 1; }
+          cp "$APK" "$OUT/"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Configure (defconfig, module compatibility, release string)
         run: bash scripts/configure.sh
 
@@ -83,12 +103,20 @@ jobs:
           path: out/
           if-no-files-found: ignore
 
+      - name: Config-only check (resolve the final .config, assert config/required.txt)
+        working-directory: ${{ env.KROOT }}
+        run: |
+          set -o pipefail
+          tools/bazel query '//common:all' 2>/dev/null | grep -E ':kernel_aarch64_config$' || { echo "::error::no kernel_aarch64_config target"; exit 1; }
+          tools/bazel build --config=fast --lto="$LTO" --disk_cache="$HOME/.cache/bazel" //common:kernel_aarch64_config 2>&1 | tail -30
+          CONFIG_ONLY=1 bash "$GITHUB_WORKSPACE/scripts/verify.sh" 2>&1 | tee "$OUT/config-check.log"
+
       - name: Build kernel (Kleaf / Bazel)
         if: inputs.stage != 'dry-run'
         working-directory: ${{ env.KROOT }}
         run: |
           set -o pipefail
-          tools/bazel build --lto="$LTO" --disk_cache="$HOME/.cache/bazel" //common:kernel_aarch64/Image 2>&1 | tee "$WORK/bazel.log"
+          tools/bazel build --config=fast --lto="$LTO" --disk_cache="$HOME/.cache/bazel" //common:kernel_aarch64/Image 2>&1 | tee "$WORK/bazel.log"
 
       - name: Verify the built kernel against config/required.txt
         if: inputs.stage != 'dry-run'
@@ -134,17 +162,6 @@ jobs:
         run: |
           set -euo pipefail
           source pins.env
-          # The manager: upstream SukiSU Nova APK, unmodified. The kernel trusts exactly one signing certificate
-          # (compiled in from Nova's Makefile); refuse to attach an APK signed by anything else.
-          gh release download --repo SukiSU-Nova/SukiSU-Nova --pattern '*arm64-v8a-release.apk' --dir "$WORK/manager" --clobber
-          APK=$(ls "$WORK/manager"/*.apk | head -1)
-          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | tail -1)
-          [ -n "$APKSIGNER" ] || { sudo apt-get install -y -qq apksigner; APKSIGNER=$(command -v apksigner); }
-          CERT=$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
-          WANT=$(sed -n 's/^KSU_EXPECTED_HASH := //p' "$KROOT/KernelSU/kernel/Makefile")
-          echo "manager APK: $(basename "$APK")  cert=$CERT  kernel trusts=$WANT"
-          [ "$CERT" = "$WANT" ] || { echo "::error::manager APK certificate does not match the kernel's compiled-in one"; exit 1; }
-          cp "$APK" "$OUT/"
           (cd "$OUT" && sha256sum * > SHA256SUMS.txt)
           TAG="nova-6.12.69-$(date -u +%Y%m%d-%H%M)"
           {
