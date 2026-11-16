@@ -67,8 +67,7 @@ perl -0pi -e 's/^\s*"protected_exports_list"\s*:\s*"android\/abi_gki_protected_e
 # protected_module_names_list must go too: it keeps CONFIG_MODULE_SIG_PROTECT on, and then every Google-signed GKI
 # module in system_dlkm (signed with a key this kernel does not have, so treated as unsigned) is refused for
 # "exports protected symbol". Seen on the phone 2026-11-16: rfkill refused -> no cfg80211 -> no Wi-Fi/Bluetooth.
-perl -pi -e 's/^\s*protected_module_names_list\s*=\s*":[A-Za-z0-9_]*_protected_module_names",\s*
-//' BUILD.bazel
+perl -pi -e 's/^\s*protected_module_names_list\s*=\s*":[A-Za-z0-9_]*_protected_module_names",\s*\n//' BUILD.bazel
 grep -q 'protected_exports_list' BUILD.bazel && die "protected_exports_list still referenced"
 grep -q 'protected_module_names_list' BUILD.bazel && die "protected_module_names_list still referenced"
 echo "protected exports/module lists removed"
