@@ -196,6 +196,13 @@ say "9/10 networking: CIFS and BBR"
 # prebuilt vendor modules were compiled against; the module CRC bypass would hide a layout mismatch.
 # CIFS=y pulls NETFS_SUPPORT=y; Kleaf fails if its GKI module list still names fs/netfs/netfs.ko.
 python3 "$WILD_SCRIPTS/cifs_modules_fix.py" "$PWD" fs/netfs/netfs.ko
+# LTO: 6.12's RUST "depends on !DEBUG_INFO_BTF || (PAHOLE_HAS_LANG_EXCLUDE && !LTO)", and BTF stays on (eBPF), so any
+# LTO turns Rust off and rust_binder.ko is never built; drop it from Kleaf's module list. The built-in C binder
+# (CONFIG_ANDROID_BINDER_IPC=y, as in stock) serves binder instead.
+if [ "${LTO:-none}" != none ]; then
+  echo "LTO=$LTO: Rust is off, removing rust_binder.ko from the GKI module list"
+  python3 "$WILD_SCRIPTS/cifs_modules_fix.py" "$PWD" drivers/android/binder/rust_binder.ko
+fi
 
 # --------------------------------------------------------------------------------------------------------
 say "10/10 tuning patches (memory, I/O, scheduler, network)"

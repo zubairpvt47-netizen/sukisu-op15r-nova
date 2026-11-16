@@ -98,3 +98,7 @@ CONFIG_FUSE_BPF=y
 
 # ---- module loading: must be OFF, or the Google-signed GKI modules (rfkill -> Wi-Fi/BT) are refused ----
 CONFIG_MODULE_SIG_PROTECT=n
+
+# ---- binder: the C driver must stay built in (with LTO, Rust and rust_binder.ko are off) ----
+CONFIG_ANDROID_BINDER_IPC=y
+CONFIG_ANDROID_BINDERFS=y
