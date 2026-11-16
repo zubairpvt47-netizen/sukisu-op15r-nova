@@ -68,15 +68,14 @@ python3 - fs/susfs.c <<'PYEOF'
 import sys
 p = sys.argv[1]; s = open(p, encoding='utf-8').read()
 if 'SUSFS_LOGI_RL' in s and '#ifndef SUSFS_LOGI_RL' not in s:
-    stub = ('#ifndef SUSFS_LOGI_RL
+    stub = """#ifndef SUSFS_LOGI_RL
 #define SUSFS_LOGI_RL(fmt, ...)
 #endif
-'
-            '#ifndef SUSFS_LOGE_RL
+#ifndef SUSFS_LOGE_RL
 #define SUSFS_LOGE_RL(fmt, ...)
 #endif
 
-')
+"""
     i = s.find('/* selinux hide */')
     if i < 0: i = s.find('static DEFINE_MUTEX(')
     if i < 0: sys.exit('fs/susfs.c: no anchor for the SUSFS_LOG*_RL stubs')
