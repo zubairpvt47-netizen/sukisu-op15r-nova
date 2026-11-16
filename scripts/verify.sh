@@ -23,7 +23,7 @@ echo "final config: $CFG"
 say "1. every option in config/required.txt"
 n=0
 while IFS= read -r line; do
-  line="${line%%#*}"; line="$(echo "$line" | xargs)"; [ -z "$line" ] && continue
+  line="${line%%#*}"; line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"; [ -z "$line" ] && continue
   key="${line%%=*}"; val="${line#*=}"; n=$((n + 1))
   case "$val" in
     y) grep -qx "${key}=y" "$CFG" || bad "$key=y not in final config ($(grep -E "^(# )?${key}[= ]" "$CFG" || echo absent))" ;;

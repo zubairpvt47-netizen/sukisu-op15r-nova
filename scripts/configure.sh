@@ -25,7 +25,7 @@ fi
 # report every unknown symbol at once, then fail once
 unknown=()
 while IFS= read -r line; do
-  line="${line%%#*}"; line="$(echo "$line" | xargs)"; [ -z "$line" ] && continue
+  line="${line%%#*}"; line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"; [ -z "$line" ] && continue
   grep -qx "${line%%=*}" <(sed 's/^/CONFIG_/' "$WORK/kconfig-symbols.txt") || unknown+=("${line%%=*}")
 done < <(cat "$HERE/config/required.txt" "$WORK/extra-config.txt")
 if [ "${#unknown[@]}" -gt 0 ]; then
@@ -34,7 +34,7 @@ if [ "${#unknown[@]}" -gt 0 ]; then
 fi
 
 while IFS= read -r line; do
-  line="${line%%#*}"; line="$(echo "$line" | xargs)"; [ -z "$line" ] && continue
+  line="${line%%#*}"; line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"; [ -z "$line" ] && continue
   key="${line%%=*}"; val="${line#*=}"
   case "$val" in
     y) bash scripts/config --file "$DEFCONFIG" --enable "$key" ;;
