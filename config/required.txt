@@ -24,7 +24,6 @@ CONFIG_KSU_SUSFS_SUS_MAP=y
 CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y
 
 # ---- systemless-mount drivers, security, sync ----------------------------------------------------------
-CONFIG_ZEROMOUNT=y
 CONFIG_NOMOUNT=y
 CONFIG_BBG=y
 CONFIG_BPF_LSM=y

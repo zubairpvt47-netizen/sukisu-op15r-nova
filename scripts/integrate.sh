@@ -4,8 +4,7 @@
 #   KROOT  workspace holding the repo-synced kernel tree ($KROOT/common is kernel/common)
 #   WORK   scratch directory for the pinned upstream clones
 #
-# Order matters: SUSFS first (it rewrites fs/ files the later patches anchor on), then ZeroMount (written
-# against SUSFS-patched sources), then NoMount / Baseband Guard / NTSync / tuning.
+# Order matters: SUSFS first (it rewrites fs/ files the later patches anchor on), then NoMount / Baseband Guard / NTSync / tuning.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 source "$HERE/pins.env"
@@ -20,7 +19,6 @@ cd "$K"
 say "1/10 fetch pinned upstreams"
 clone_at "$NOVA_REPO"          "$KROOT/KernelSU"        "$NOVA_PIN" full
 clone_at "$SUSFS_REPO"         "$WORK/susfs4ksu"        "$SUSFS_PIN"
-clone_at "$ZEROMOUNT_REPO"     "$WORK/zeromount-src"    "$ZEROMOUNT_PIN"
 clone_at "$WILD_PATCHES_REPO"  "$WORK/wild-patches"     "$WILD_PATCHES_PIN"
 clone_at "$WILD_GKI_REPO"      "$WORK/wild-gki"         "$WILD_GKI_PIN"
 WILD_SCRIPTS="$WORK/wild-gki/.github/scripts"
@@ -64,6 +62,26 @@ cp "$WORK/susfs4ksu/kernel_patches/fs/"*             fs/
 cp "$WORK/susfs4ksu/kernel_patches/include/linux/"*  include/linux/
 cp "$WORK/susfs4ksu/kernel_patches/$PATCH" .
 # Nova already carries the KernelSU-side SUSFS glue: kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch must NOT be applied.
+# susfs4ksu bug: with CONFIG_KSU_SUSFS_ENABLE_LOG=n only SUSFS_LOGI/LOGE are stubbed, but the selinux-hide code also
+# calls SUSFS_LOGI_RL/LOGE_RL -> implicit declaration at compile time. Add no-op stubs.
+python3 - fs/susfs.c <<'PYEOF'
+import sys
+p = sys.argv[1]; s = open(p, encoding='utf-8').read()
+if 'SUSFS_LOGI_RL' in s and '#ifndef SUSFS_LOGI_RL' not in s:
+    stub = ('#ifndef SUSFS_LOGI_RL
+#define SUSFS_LOGI_RL(fmt, ...)
+#endif
+'
+            '#ifndef SUSFS_LOGE_RL
+#define SUSFS_LOGE_RL(fmt, ...)
+#endif
+
+')
+    i = s.find('/* selinux hide */')
+    if i < 0: i = s.find('static DEFINE_MUTEX(')
+    if i < 0: sys.exit('fs/susfs.c: no anchor for the SUSFS_LOG*_RL stubs')
+    open(p, 'w', encoding='utf-8').write(s[:i] + stub + s[i:]); print('added SUSFS_LOGI_RL/LOGE_RL stubs')
+PYEOF
 python3 "$WILD_SCRIPTS/susfs_guard_priority_helpers.py" fs/susfs.c
 python3 "$WILD_SCRIPTS/susfs_restore_context.py" "$PATCH" "$PWD"
 # adapts the patch to this sublevel's exec.c / task_mmu.c shape, then applies it with patch(1)
@@ -84,13 +102,6 @@ for sym in $(grep -rhoE '\bksu_[a-z0-9_]+\(' fs kernel include/linux drivers/inp
   grep -rqE "\b${sym}\b" "$NOVA/kernel" || { echo "UNRESOLVED: $sym is called by the SUSFS hooks but not defined by Nova"; missing=1; }
 done
 [ "$missing" = 0 ] || die "Nova does not provide every hook SUSFS calls (see UNRESOLVED above)"
-
-# --------------------------------------------------------------------------------------------------------
-say "4/10 ZeroMount VFS driver"
-ZM_PATCH="$WORK/zeromount-src/android16-6.12/SukiSU-Ultra/patches/60_zeromount-android16-6.12.patch"
-# The same 60_ file is shipped for every root variant (md5-identical); it is independent of the root manager.
-apply_patch "$ZM_PATCH" -F0
-[ -f fs/zeromount.c ] && [ -f include/linux/zeromount.h ] || die "ZeroMount files missing after patch"
 
 # --------------------------------------------------------------------------------------------------------
 say "5/10 NoMount"

@@ -64,7 +64,7 @@ jobs:
       - name: Sync Google kernel source (pinned to the phone's commit)
         run: bash scripts/sync-source.sh
 
-      - name: Integrate SukiSU Nova, SUSFS, ZeroMount, NoMount, Baseband Guard, NTSync, tuning
+      - name: Integrate SukiSU Nova, SUSFS, NoMount, Baseband Guard, NTSync, tuning
         run: bash scripts/integrate.sh
 
       - name: Configure (defconfig, module compatibility, release string)
@@ -156,7 +156,6 @@ jobs:
             echo "| Component | Pin |"; echo "|---|---|"
             echo "| SUSFS (gki-android16-6.12) | \`${SUSFS_PIN:0:8}\` |"
             echo "| NoMount | \`${NOMOUNT_PIN:0:8}\` |"
-            echo "| ZeroMount (Super-Builders patch) | \`${ZEROMOUNT_PIN:0:8}\` |"
             echo "| Baseband Guard | \`${BBG_PIN:0:8}\` |"
             echo "| WildKernels patches | \`${WILD_PATCHES_PIN:0:8}\` |"
             echo; echo "Verification output:"; echo '```'; tail -60 "$OUT/verify.log"; echo '```'

@@ -24,7 +24,7 @@ PATCH_VBMETA_FLAG=auto;
 
 ui_print " ";
 ui_print "SukiSU Nova kernel for the OnePlus 15R";
-ui_print "Linux 6.12.69 - SUSFS, NoMount, ZeroMount, Baseband Guard, NTSync";
+ui_print "Linux 6.12.69 - SUSFS, NoMount, Baseband Guard, NTSync";
 ui_print "Manager: SukiSU Nova only (com.sukisu.nova)";
 ui_print " ";
 

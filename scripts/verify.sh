@@ -64,8 +64,8 @@ rel = m.group(1).decode() if m else None
 print("built release :", rel)
 print("stock release :", stock)
 if rel != stock:
-    print("FAIL: release string differs from the stock kernel; vendor modules would reject it (vermagic)"); ok = False
-for needle, why in [(b"susfs", "SUSFS"), (b"zeromount", "ZeroMount"), (b"nomount", "NoMount"), (b"baseband_guard", "Baseband Guard"),
+    print("NOTE: release string differs from stock (modules with CRCs ignore the version token in vermagic)")
+for needle, why in [(b"susfs", "SUSFS"), (b"nomount", "NoMount"), (b"baseband_guard", "Baseband Guard"),
                     (b"ntsync", "NTSync"), (b"com.sukisu.nova", "Nova manager package"),
                     (b"947ae944f3de4ed4c21a7e4f7953ecf351bfa2b36239da37a34111ad29993eef", "Nova manager signature hash")]:
     c = img.count(needle)

@@ -37,7 +37,7 @@ while IFS= read -r line; do
 done < <(cat "$HERE/config/required.txt" "${WORK:+$WORK/extra-config.txt}" 2>/dev/null)
 # string values: scripts/config --set-val does not quote strings
 sed -i 's|^CONFIG_DEFAULT_TCP_CONG=bbr$|CONFIG_DEFAULT_TCP_CONG="bbr"|' "$DEFCONFIG"
-grep -E '^CONFIG_(KSU|ZEROMOUNT|NOMOUNT|BBG|NTSYNC)=' "$DEFCONFIG"
+grep -E '^CONFIG_(KSU|NOMOUNT|BBG|NTSYNC)=' "$DEFCONFIG"
 
 say "build wiring (Kleaf)"
 # our extra options are not in Google's ABI-checked defconfig
@@ -78,6 +78,13 @@ EOF
 chmod +x scripts/setlocalversion
 [ -f ../build/kernel/kleaf/impl/stamp.bzl ] && sed -i '/stable_scmversion_cmd/s/-maybe-dirty//g' ../build/kernel/kleaf/impl/stamp.bzl || true
 echo "setlocalversion now prints: $("$PWD/scripts/setlocalversion")"
+
+# the prebuilt clang sysroot lacks the glibc 2.39 symbols of ubuntu-24.04: link the host tool against the system libc
+if [ -f tools/bpf/resolve_btfids/Makefile ]; then
+  printf 'override KBUILD_HOSTLDFLAGS += --sysroot=/
+override LDFLAGS += --sysroot=/
+' >> tools/bpf/resolve_btfids/Makefile
+fi
 
 # Kleaf refuses a dirty tree for stamped builds; commit what we changed (NoMount is a nested clone: keep it out)
 echo '/NoMount/' >> "$(git rev-parse --git-dir)/info/exclude"
