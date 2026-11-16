@@ -48,6 +48,22 @@ if (n1, n2, n3) != (1, 1, 1):
 open(p, "w", encoding="utf-8").write(s)
 PY
 grep -E '^KSU_PACKAGE_NAME|^KSU_EXPECTED_(SIZE|HASH)' "$NOVA/kernel/Makefile"
+# Nova only: upstream is_manager_apk() also trusts 4 more signing keys (dummy.keystore = a public debug key anyone
+# can sign with, an older SukiSU key, KOWX712, midori01). Keep only the Makefile's EXPECTED_SIZE/EXPECTED_HASH (Nova).
+python3 - "$NOVA/kernel/manager/apk_sign.c" <<'PY'
+import re, sys
+p = sys.argv[1]; s = open(p, encoding="utf-8").read()
+m = re.search(r'bool is_manager_apk\(char \*path\)\n\{\n(.*?)\n\}\n', s, flags=re.S)
+if not m or 'EXPECTED_SIZE, EXPECTED_HASH' not in m.group(1):
+    sys.exit("apk_sign.c: is_manager_apk() anchor moved")
+body = "\t// sukisu-op15r-nova: SukiSU Nova's own signing key only\n\treturn check_v2_signature(path, EXPECTED_SIZE, EXPECTED_HASH);"
+s = s[:m.start(1)] + body + s[m.end(1):]
+open(p, "w", encoding="utf-8").write(s)
+print("is_manager_apk: Nova key only")
+PY
+for h in 4359c171f325 56695cfa454a 484fcba6e6c4 b9ee6759de47; do
+  ! grep -rq "$h" "$NOVA/kernel" || die "foreign manager signature $h still in the Nova source"
+done
 [ -e drivers/kernelsu ] && die "drivers/kernelsu already exists"
 ln -s "$(realpath --relative-to=drivers "$NOVA/kernel")" drivers/kernelsu
 printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile

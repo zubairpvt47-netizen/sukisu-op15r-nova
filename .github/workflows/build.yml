@@ -117,6 +117,18 @@ jobs:
         run: |
           set -o pipefail
           tools/bazel build --config=fast --lto="$LTO" --disk_cache="$HOME/.cache/bazel" //common:kernel_aarch64/Image 2>&1 | tee "$WORK/bazel.log"
+          mkdir -p "$WORK/raw"
+          cp bazel-bin/common/kernel_aarch64/Image "$WORK/raw/Image"
+          cp "$(find bazel-bin/common -name .config -path '*kernel_aarch64*' | head -1)" "$WORK/raw/final.config" || true
+
+      # keep the compiled Image even if a later step (verify, packaging) fails
+      - name: Upload raw Image
+        if: always() && inputs.stage != 'dry-run'
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw-image-lto-${{ inputs.lto }}
+          path: work/raw/
+          if-no-files-found: ignore
 
       - name: Verify the built kernel against config/required.txt
         if: inputs.stage != 'dry-run'

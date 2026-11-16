@@ -81,6 +81,13 @@ for needle, why in [(b"susfs", "SUSFS"), (b"nomount", "NoMount"), (b"baseband_gu
 for other in (b"me.weishu.kernelsu", b"com.rifsxd.ksunext", b"com.sukisu.ultra", b"me.bmax.apatch"):
     if other in img:
         print("FAIL: foreign manager package present in the Image:", other.decode()); ok = False
+# no other manager signing key (upstream Nova trusts 4 extra keys; integrate.sh removes them)
+for other in (b"4359c171f32543394cbc23ef908c4bb94cad7c8087002ba164c8230948c21549",
+              b"56695cfa454a72060641830a5c64297aaf3f21f8d55db4a21f83d9ab5be0cd19",
+              b"484fcba6e6c43b1fb09700633bf2fb4758f13cb0b2f4457b80d075084b26c588",
+              b"b9ee6759de4794f954883458b722b97ae6527cb7709a051db9a2348c0eea1e42"):
+    if other in img:
+        print("FAIL: foreign manager signature present in the Image:", other[:12].decode()); ok = False
 sys.exit(0 if ok else 1)
 PY
 
