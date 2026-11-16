@@ -122,6 +122,10 @@ jobs:
           tools/bazel build --config=fast --lto="$LTO" --disk_cache="$HOME/.cache/bazel" //common:kernel_aarch64_config 2>&1 | tail -30
           CONFIG_ONLY=1 bash "$GITHUB_WORKSPACE/scripts/verify.sh" 2>&1 | tee "$OUT/config-check.log"
 
+      - name: LTO diagnostics (read-only)
+        if: always() && inputs.lto != 'none'
+        run: bash scripts/diag-lto.sh 2>&1 | tee "$OUT/lto-diag.log"
+
       - name: Build kernel (Kleaf / Bazel)
         if: inputs.stage != 'dry-run'
         working-directory: ${{ env.KROOT }}
