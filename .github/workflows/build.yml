@@ -18,9 +18,9 @@ on:
         options: [thin, full, none]
         default: none
       tuning:
-        description: "WildKernels tuning patches (18)"
+        description: "WildKernels tuning patches (18) - off by owner's choice (2026-11-16)"
         type: boolean
-        default: true
+        default: false
       unicode:
         description: "Unicode bypass fix (experimental)"
         type: boolean

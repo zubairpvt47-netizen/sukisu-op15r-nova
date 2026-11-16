@@ -199,7 +199,7 @@ python3 "$WILD_SCRIPTS/cifs_modules_fix.py" "$PWD" fs/netfs/netfs.ko
 
 # --------------------------------------------------------------------------------------------------------
 say "10/10 tuning patches (memory, I/O, scheduler, network)"
-if [ "${WITH_TUNING:-true}" != true ]; then
+if [ "${WITH_TUNING:-false}" != true ]; then
   echo "skipped (WITH_TUNING=false)"
 else
 # Audited one by one (see README). Left out on purpose:
