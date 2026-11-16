@@ -91,6 +91,15 @@ for other in (b"4359c171f32543394cbc23ef908c4bb94cad7c8087002ba164c8230948c21549
 sys.exit(0 if ok else 1)
 PY
 
+say "4b. ashmem symbols the OnePlus vendor modules import (real Rust driver, or the LTO stand-ins)"
+if [ -n "$SYMVERS" ]; then
+  for sym in is_ashmem_file ashmem_area_name ashmem_area_size ashmem_area_vmfile; do
+    grep -qE "[[:space:]]${sym}[[:space:]]" "$SYMVERS" && echo "ok: $sym exported" || bad "$sym not exported (oplus vendor modules may need it)"
+  done
+else
+  bad "no Module.symvers to check the ashmem exports against"
+fi
+
 say "5. module symbol CRCs"
 if [ -n "$SYMVERS" ]; then echo "Module.symvers saved ($(wc -l < "$SYMVERS") symbols); compare against the stock vendor modules with tools/modabi.py"; fi
 

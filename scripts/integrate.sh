@@ -202,6 +202,22 @@ python3 "$WILD_SCRIPTS/cifs_modules_fix.py" "$PWD" fs/netfs/netfs.ko
 if [ "${LTO:-none}" != none ]; then
   echo "LTO=$LTO: Rust is off, removing rust_binder.ko from the GKI module list"
   python3 "$WILD_SCRIPTS/cifs_modules_fix.py" "$PWD" drivers/android/binder/rust_binder.ko
+
+  # With LTO Kleaf trims the ksymtab to the KMI lists and, with kmi_symbol_list_strict_mode, fails the build if a listed
+  # symbol does not exist. Rust being off removes two groups of listed symbols:
+  #  - Pixel-only Rust binder symbols (gki/aarch64/symbols/pixel): not used by this phone, so drop them from the list.
+  #  - ashmem_* / is_ashmem_file (gki/aarch64/symbols/oplus): OnePlus vendor modules may import them, so keep them and
+  #    provide C stand-ins (no ashmem driver -> never an ashmem file). Built only while CONFIG_ASHMEM is unset.
+  PIXEL=gki/aarch64/symbols/pixel
+  [ -f "$PIXEL" ] || die "$PIXEL not found"
+  sed -i -E '/^[[:space:]]*(RUST_BINDER_LAYOUT|__(traceiter|tracepoint)_android_vh_rust_binder_[a-z_]+)[[:space:]]*$/d' "$PIXEL"
+  ! grep -qE 'rust_binder|RUST_BINDER' "$PIXEL" || die "Rust binder symbols still in $PIXEL"
+  echo "removed the Rust binder symbols from $PIXEL"
+
+  cp "$HERE/scripts/stubs/ashmem_stub.c" kernel/ashmem_stub.c
+  grep -q 'ashmem_stub.o' kernel/Makefile || printf '\n# sukisu-op15r-nova: ashmem symbol stand-ins when the Rust ashmem driver is not built (LTO)\nifndef CONFIG_ASHMEM\nobj-y += ashmem_stub.o\nendif\n' >> kernel/Makefile
+  grep -q 'ashmem_stub.o' kernel/Makefile || die "kernel/Makefile hook for ashmem_stub.o not added"
+  echo "ashmem stand-ins added (kernel/ashmem_stub.c)"
 fi
 
 # --------------------------------------------------------------------------------------------------------
