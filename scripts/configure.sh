@@ -12,7 +12,7 @@ DEFCONFIG=arch/arm64/configs/gki_defconfig
 [ -f "$DEFCONFIG" ] || die "$DEFCONFIG missing"
 
 say "defconfig: apply config/required.txt"
-grep -rhoE '^(menu)?config [A-Za-z0-9_]+' --include='Kconfig*' . | awk '{print $2}' | sort -u > /tmp/kconfig-symbols.txt
+grep -RhoE '^(menu)?config [A-Za-z0-9_]+' --include='Kconfig*' . | awk '{print $2}' | sort -u > /tmp/kconfig-symbols.txt
 echo "$(wc -l < /tmp/kconfig-symbols.txt) Kconfig symbols in the patched tree"
 
 # BBRv3 as its own algorithm exists only when the BBRv3 patch was applied; BBR itself is the in-tree one

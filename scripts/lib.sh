@@ -57,5 +57,5 @@ apply_patch() {
 
 # Kconfig symbol must exist somewhere in the tree, otherwise a "CONFIG_X=y" line is silently dropped
 need_symbol() {  # need_symbol <SYMBOL-without-CONFIG_> [dir]
-  grep -rqsE "^(menu)?config ${1}\$" --include='Kconfig*' "${2:-.}" || die "Kconfig symbol $1 does not exist in this tree"
+  grep -RqsE "^(menu)?config ${1}\$" --include='Kconfig*' "${2:-.}" || die "Kconfig symbol $1 does not exist in this tree"
 }
