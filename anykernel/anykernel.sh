@@ -3,12 +3,13 @@
 
 properties() { '
 kernel.string=SukiSU Nova kernel for the OnePlus 15R (Linux 6.12.69, GKI android16)
-do.devicecheck=0
+do.devicecheck=1
 do.modules=0
 do.systemless=0
 do.cleanup=1
 do.cleanuponabort=0
-device.name1=
+device.name1=OP612DL1
+device.name2=CPH2767IN
 supported.versions=
 supported.patchlevels=
 supported.vendorpatchlevels=
