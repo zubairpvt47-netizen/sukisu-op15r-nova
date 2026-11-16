@@ -117,6 +117,8 @@ grep -q 'nomount' fs/Makefile && grep -q 'nomount' fs/Kconfig || die "NoMount is
 
 # --------------------------------------------------------------------------------------------------------
 say "6/10 Baseband Guard"
+# setup.sh does `git clone --branch <ref>`, which only accepts branch/tag names, so pre-clone at the exact commit
+clone_at "$BBG_REPO" "$KROOT/Baseband-guard" "$BBG_PIN"
 ( cd "$KROOT"
   curl -fsSL --retry 5 --retry-all-errors -o "$WORK/bbg-setup.sh" \
     "https://raw.githubusercontent.com/vc-teahouse/Baseband-guard/$BBG_PIN/setup.sh"
