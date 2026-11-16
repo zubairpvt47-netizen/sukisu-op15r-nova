@@ -206,18 +206,31 @@ if [ "${LTO:-none}" != none ]; then
   # With LTO Kleaf trims the ksymtab to the KMI lists and, with kmi_symbol_list_strict_mode, fails the build if a listed
   # symbol does not exist. Rust being off removes two groups of listed symbols:
   #  - Pixel-only Rust binder symbols (gki/aarch64/symbols/pixel): not used by this phone, so drop them from the list.
-  #  - ashmem_* / is_ashmem_file (gki/aarch64/symbols/oplus): OnePlus vendor modules may import them, so keep them and
-  #    provide C stand-ins (no ashmem driver -> never an ashmem file). Built only while CONFIG_ASHMEM is unset.
+  #  - the ashmem driver and its four exports (gki/aarch64/symbols/oplus). The phone really uses /dev/ashmem (Android
+  #    keeps sys.use_memfd=false; ~2500 open ashmem fds seen), and 2026-03 only ships the Rust driver, so swap in
+  #    Google's C driver from android16-6.12-2025-12 (vendored in scripts/ashmem-c) plus the four exports.
   PIXEL=gki/aarch64/symbols/pixel
   [ -f "$PIXEL" ] || die "$PIXEL not found"
   sed -i -E '/^[[:space:]]*(RUST_BINDER_LAYOUT|__(traceiter|tracepoint)_android_vh_rust_binder_[a-z_]+)[[:space:]]*$/d' "$PIXEL"
   ! grep -qE 'rust_binder|RUST_BINDER' "$PIXEL" || die "Rust binder symbols still in $PIXEL"
   echo "removed the Rust binder symbols from $PIXEL"
 
-  cp "$HERE/scripts/stubs/ashmem_stub.c" kernel/ashmem_stub.c
-  grep -q 'ashmem_stub.o' kernel/Makefile || printf '\n# sukisu-op15r-nova: ashmem symbol stand-ins when the Rust ashmem driver is not built (LTO)\nifndef CONFIG_ASHMEM\nobj-y += ashmem_stub.o\nendif\n' >> kernel/Makefile
-  grep -q 'ashmem_stub.o' kernel/Makefile || die "kernel/Makefile hook for ashmem_stub.o not added"
-  echo "ashmem stand-ins added (kernel/ashmem_stub.c)"
+  ASH=drivers/staging/android
+  AC="$HERE/scripts/ashmem-c"
+  for f in ashmem.rs ashmem_range.rs ashmem_shrinker.rs ashmem_toggle.rs shmem.rs ashmem_exports.c; do
+    [ -f "$ASH/$f" ] || die "$ASH/$f missing: the tree no longer has the Rust ashmem layout this swap expects"
+  done
+  [ "$(sha256sum < "$AC/ashmem.c" | cut -d' ' -f1)" = 63bd518d3e739ae6a190b4fc8ebf9359c8745d5e579c6cdf562a8c8776f56089 ] || die "scripts/ashmem-c/ashmem.c was modified"
+  [ "$(sha256sum < "$AC/ashmem.h" | cut -d' ' -f1)" = 94fef78c005a36c16a298a293b28f2a999cce016ce8399818f60b9ed9ea3a4f1 ] || die "scripts/ashmem-c/ashmem.h was modified"
+  # the uapi header must be the one both Google trees share (the C driver is written against it)
+  [ "$(sha256sum < "$ASH/uapi/ashmem.h" | cut -d' ' -f1)" = 32e4a2b6f0430e6607e36a1331c1d73661a1cd5e74262928bcbb4005ba571516 ] || die "$ASH/uapi/ashmem.h differs from the 2025-12 / 2026-03 header"
+  rm -f "$ASH/ashmem.rs" "$ASH/ashmem_range.rs" "$ASH/ashmem_shrinker.rs" "$ASH/ashmem_toggle.rs" "$ASH/shmem.rs" "$ASH/ashmem_exports.c"
+  cp "$AC/ashmem.c" "$AC/ashmem.h" "$ASH/"
+  cat "$AC/ashmem_exports.inc" >> "$ASH/ashmem.c"
+  grep -q '^	depends on SHMEM && RUST$' "$ASH/Kconfig" || die "$ASH/Kconfig: ASHMEM dependency line not found"
+  sed -i 's/^	depends on SHMEM && RUST$/	depends on SHMEM/' "$ASH/Kconfig"
+  printf '%s\n' '# SPDX-License-Identifier: GPL-2.0' 'ccflags-y += -I$(src)			# needed for trace events' '' 'obj-$(CONFIG_ASHMEM)		+= ashmem.o' > "$ASH/Makefile"
+  echo "ashmem: Rust driver replaced by the C driver (android16-6.12-2025-12_r63) + exports"
 fi
 
 # --------------------------------------------------------------------------------------------------------

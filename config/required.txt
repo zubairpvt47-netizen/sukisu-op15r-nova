@@ -102,3 +102,6 @@ CONFIG_MODULE_SIG_PROTECT=n
 # ---- binder: the C driver must stay built in (with LTO, Rust and rust_binder.ko are off) ----
 CONFIG_ANDROID_BINDER_IPC=y
 CONFIG_ANDROID_BINDERFS=y
+
+# ---- ashmem: the phone really uses /dev/ashmem (Android keeps sys.use_memfd=false); every build, LTO or not, must have it ----
+CONFIG_ASHMEM=y
