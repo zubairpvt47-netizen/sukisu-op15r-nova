@@ -64,10 +64,14 @@ sed -i 's/check_defconfig//' build.config.gki 2>/dev/null || true
 # refuse unsigned modules certain symbols (-EPERM at insmod: no Wi-Fi, no modem), so drop them.
 rm -rf android/abi_gki_protected_exports_*
 perl -0pi -e 's/^\s*"protected_exports_list"\s*:\s*"android\/abi_gki_protected_exports_aarch64",\s*\n//mg' BUILD.bazel
-# protected_module_names_list stays: removing it turns CONFIG_MODULE_SIG_PROTECT off, which stock and the
-# sukisu-op15r build that boots on the phone both keep on (required.txt asserts it).
+# protected_module_names_list must go too: it keeps CONFIG_MODULE_SIG_PROTECT on, and then every Google-signed GKI
+# module in system_dlkm (signed with a key this kernel does not have, so treated as unsigned) is refused for
+# "exports protected symbol". Seen on the phone 2026-11-16: rfkill refused -> no cfg80211 -> no Wi-Fi/Bluetooth.
+perl -pi -e 's/^\s*protected_module_names_list\s*=\s*":[A-Za-z0-9_]*_protected_module_names",\s*
+//' BUILD.bazel
 grep -q 'protected_exports_list' BUILD.bazel && die "protected_exports_list still referenced"
-echo "protected exports list removed"
+grep -q 'protected_module_names_list' BUILD.bazel && die "protected_module_names_list still referenced"
+echo "protected exports/module lists removed"
 
 # Rebuilt exports can carry different symbol CRCs than the stock kernel's (new headers change DWARF-derived CRCs
 # even when struct layouts are identical). Let a module with a CRC mismatch load.
