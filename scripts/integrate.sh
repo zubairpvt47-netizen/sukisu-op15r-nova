@@ -141,8 +141,8 @@ clone_at "$BBG_REPO" "$KROOT/Baseband-guard" "$BBG_PIN"
   sh "$WORK/bbg-setup.sh" "$BBG_PIN" )
 [ "$(git -C "$KROOT/Baseband-guard" rev-parse HEAD)" = "$BBG_PIN" ] || die "Baseband Guard moved off its pin"
 # put it in the default LSM order
-# same position as Baseband Guard's own setup and the sukisu-op15r build that boots on the phone: right after lockdown
-sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' security/Kconfig
+# right after selinux: this is the order of release nova-6.12.69-20261116, boot-tested on the phone
+sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig
 grep -q 'baseband_guard' security/Kconfig || die "baseband_guard missing from the LSM order"
 # It is a static LSM, so it needs a slot: with only 5 slots (capability, selinux, safesetid, bpf, landlock) the
 # kernel would drop the last ordered LSM ("bpf") at boot with a warning. Count it in MAX_LSM_COUNT.
@@ -199,7 +199,7 @@ python3 "$WILD_SCRIPTS/cifs_modules_fix.py" "$PWD" fs/netfs/netfs.ko
 
 # --------------------------------------------------------------------------------------------------------
 say "10/10 tuning patches (memory, I/O, scheduler, network)"
-if [ "${WITH_TUNING:-false}" != true ]; then
+if [ "${WITH_TUNING:-true}" != true ]; then
   echo "skipped (WITH_TUNING=false)"
 else
 # Audited one by one (see README). Left out on purpose:
