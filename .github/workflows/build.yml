@@ -1,0 +1,165 @@
+name: Build SukiSU Nova kernel (OnePlus 15R)
+
+# stage = dry-run : fetch source, apply every patch, write the config, stop (about 10 minutes). Use it after any pin change.
+# stage = build   : full compile + post-build verification + AnyKernel3 zip as a workflow artifact.
+# stage = release : build, and only if verify.sh passed, publish a GitHub Release (marked pre-release: not boot-tested).
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "How far to go"
+        type: choice
+        options: [dry-run, build, release]
+        default: build
+      lto:
+        description: "Link-time optimisation"
+        type: choice
+        options: [thin, full, none]
+        default: thin
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  KROOT: ${{ github.workspace }}/kernel
+  WORK: ${{ github.workspace }}/work
+  OUT: ${{ github.workspace }}/out
+  LTO: ${{ inputs.lto }}
+
+jobs:
+  kernel:
+    name: Kernel (6.12.69, ${{ inputs.stage }}, lto=${{ inputs.lto }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space and add swap
+        run: |
+          set -x
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift || true
+          sudo docker image prune -af || true
+          df -h /
+          # LTO links need more than the 16 GB of RAM a runner has
+          sudo swapoff -a || true
+          sudo fallocate -l 24G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+          free -h
+
+      - name: Host tools
+        run: |
+          for i in 1 2 3 4; do sudo apt-get update -qq && sudo apt-get install -y -qq git-core gnupg flex bison build-essential zip curl \
+            libc6-dev libncurses-dev libssl-dev libelf-dev dwarves rsync python3 perl dos2unix && break; sleep 15; done
+          mkdir -p "$HOME/bin"
+          curl -fsSL --retry 5 https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
+          chmod +x "$HOME/bin/repo"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          git config --global user.name ci && git config --global user.email ci@localhost
+          git config --global --add safe.directory '*'
+
+      - name: Sync Google kernel source (pinned to the phone's commit)
+        run: bash scripts/sync-source.sh
+
+      - name: Integrate SukiSU Nova, SUSFS, ZeroMount, NoMount, Baseband Guard, NTSync, tuning
+        run: bash scripts/integrate.sh
+
+      - name: Configure (defconfig, module compatibility, release string)
+        run: bash scripts/configure.sh
+
+      - name: Upload integration diff (for review)
+        if: always()
+        run: |
+          mkdir -p "$OUT"
+          git -C "$KROOT/common" diff --stat HEAD~1 HEAD > "$OUT/changed-files.txt" 2>/dev/null || true
+          find "$KROOT/common" \( -name '*.rej' -o -name '*.orig' \) -not -path '*/.git/*' > "$OUT/rejects.txt" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-report
+          path: out/
+          if-no-files-found: ignore
+
+      - name: Build kernel (Kleaf / Bazel)
+        if: inputs.stage != 'dry-run'
+        working-directory: ${{ env.KROOT }}
+        run: |
+          set -o pipefail
+          tools/bazel build --lto="$LTO" --disk_cache="$HOME/.cache/bazel" //common:kernel_aarch64/Image 2>&1 | tee "$WORK/bazel.log"
+
+      - name: Verify the built kernel against config/required.txt
+        if: inputs.stage != 'dry-run'
+        run: bash scripts/verify.sh 2>&1 | tee "$OUT/verify.log"
+
+      - name: Package AnyKernel3
+        if: inputs.stage != 'dry-run'
+        run: |
+          set -euo pipefail
+          source pins.env
+          source scripts/lib.sh
+          clone_at "$ANYKERNEL_REPO" "$WORK/AnyKernel3" "$ANYKERNEL_PIN"
+          rm -rf "$WORK/AnyKernel3/.git" "$WORK/AnyKernel3/.github" "$WORK/AnyKernel3/README.md" "$WORK/AnyKernel3/ramdisk" "$WORK/AnyKernel3/patch" "$WORK/AnyKernel3/modules"
+          cp anykernel/anykernel.sh "$WORK/AnyKernel3/anykernel.sh"
+          cp "$KROOT/bazel-bin/common/kernel_aarch64/Image" "$WORK/AnyKernel3/Image"
+          mkdir -p "$WORK/AnyKernel3/ramdisk" "$WORK/AnyKernel3/patch"
+          NAME="SukiSU-Nova-OP15R-6.12.69-$(date -u +%Y%m%d)"
+          echo "ZIPNAME=$NAME" >> "$GITHUB_ENV"
+          (cd "$WORK/AnyKernel3" && zip -r9q "$OUT/$NAME-AnyKernel3.zip" . -x '.git*')
+          cp "$KROOT/bazel-bin/common/kernel_aarch64/Image" "$OUT/Image"
+          (cd "$OUT" && sha256sum Image "$NAME-AnyKernel3.zip" > SHA256SUMS.txt && cat SHA256SUMS.txt)
+
+      - name: Upload kernel
+        if: inputs.stage != 'dry-run'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-6.12.69
+          path: out/
+          retention-days: 30
+
+      - name: Upload bazel log
+        if: always() && inputs.stage != 'dry-run'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bazel-log
+          path: work/bazel.log
+          if-no-files-found: ignore
+
+      - name: Publish release
+        if: inputs.stage == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source pins.env
+          # The manager: upstream SukiSU Nova APK, unmodified. The kernel trusts exactly one signing certificate
+          # (compiled in from Nova's Makefile); refuse to attach an APK signed by anything else.
+          gh release download --repo SukiSU-Nova/SukiSU-Nova --pattern '*arm64-v8a-release.apk' --dir "$WORK/manager" --clobber
+          APK=$(ls "$WORK/manager"/*.apk | head -1)
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | tail -1)
+          [ -n "$APKSIGNER" ] || { sudo apt-get install -y -qq apksigner; APKSIGNER=$(command -v apksigner); }
+          CERT=$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          WANT=$(sed -n 's/^KSU_EXPECTED_HASH := //p' "$KROOT/KernelSU/kernel/Makefile")
+          echo "manager APK: $(basename "$APK")  cert=$CERT  kernel trusts=$WANT"
+          [ "$CERT" = "$WANT" ] || { echo "::error::manager APK certificate does not match the kernel's compiled-in one"; exit 1; }
+          cp "$APK" "$OUT/"
+          (cd "$OUT" && sha256sum * > SHA256SUMS.txt)
+          TAG="nova-6.12.69-$(date -u +%Y%m%d-%H%M)"
+          {
+            echo "**Pre-release. Built and config-verified in CI; NOT boot-tested on a device.** Flash only with a way back (stock boot image backed up)."
+            echo
+            echo "Kernel: Google android16-6.12 \`$COMMON_TAG\` (commit \`$COMMON_COMMIT_PREFIX\`, Linux 6.12.69) - the tree the OnePlus 15R (CPH2767) stock kernel is built from."
+            echo "Root: SukiSU Nova \`builtin-new\` @ \`${NOVA_PIN:0:8}\`, manager: only the upstream SukiSU Nova app (\`com.sukisu.nova\`), APK attached unmodified."
+            echo
+            echo "| Component | Pin |"; echo "|---|---|"
+            echo "| SUSFS (gki-android16-6.12) | \`${SUSFS_PIN:0:8}\` |"
+            echo "| NoMount | \`${NOMOUNT_PIN:0:8}\` |"
+            echo "| ZeroMount (Super-Builders patch) | \`${ZEROMOUNT_PIN:0:8}\` |"
+            echo "| Baseband Guard | \`${BBG_PIN:0:8}\` |"
+            echo "| WildKernels patches | \`${WILD_PATCHES_PIN:0:8}\` |"
+            echo; echo "Verification output:"; echo '```'; tail -60 "$OUT/verify.log"; echo '```'
+          } > "$WORK/notes.md"
+          gh release create "$TAG" --prerelease --title "SukiSU Nova kernel for OnePlus 15R, 6.12.69 ($TAG)" --notes-file "$WORK/notes.md" \
+            "$OUT/$ZIPNAME-AnyKernel3.zip" "$OUT/Image" "$OUT/final.config" "$OUT"/*.apk "$OUT/SHA256SUMS.txt"
