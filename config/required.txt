@@ -96,3 +96,6 @@ CONFIG_BPF_JIT=y
 CONFIG_FUSE_BPF=y
 
 # LTO is chosen by the Bazel --lto flag, so verify.sh checks CONFIG_LTO_CLANG_<mode> separately.
+
+# ---- module loading: same as stock (removing protected_module_names_list would turn this off) ----
+CONFIG_MODULE_SIG_PROTECT=y

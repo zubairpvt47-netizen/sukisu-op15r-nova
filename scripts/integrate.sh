@@ -141,7 +141,8 @@ clone_at "$BBG_REPO" "$KROOT/Baseband-guard" "$BBG_PIN"
   sh "$WORK/bbg-setup.sh" "$BBG_PIN" )
 [ "$(git -C "$KROOT/Baseband-guard" rev-parse HEAD)" = "$BBG_PIN" ] || die "Baseband Guard moved off its pin"
 # put it in the default LSM order
-sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig
+# same position as Baseband Guard's own setup and the sukisu-op15r build that boots on the phone: right after lockdown
+sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' security/Kconfig
 grep -q 'baseband_guard' security/Kconfig || die "baseband_guard missing from the LSM order"
 # It is a static LSM, so it needs a slot: with only 5 slots (capability, selinux, safesetid, bpf, landlock) the
 # kernel would drop the last ordered LSM ("bpf") at boot with a warning. Count it in MAX_LSM_COUNT.
@@ -182,7 +183,11 @@ need_symbol NTSYNC
 
 # --------------------------------------------------------------------------------------------------------
 say "8/10 Unicode bypass fix (experimental, WildKernels)"
-apply_patch "$WP/unicode_bypass_fix_6.1+.patch"
+if [ "${WITH_UNICODE:-true}" = true ]; then
+  apply_patch "$WP/unicode_bypass_fix_6.1+.patch"
+else
+  echo "skipped (WITH_UNICODE=false)"
+fi
 
 # --------------------------------------------------------------------------------------------------------
 say "9/10 networking: CIFS and BBR"
@@ -194,6 +199,9 @@ python3 "$WILD_SCRIPTS/cifs_modules_fix.py" "$PWD" fs/netfs/netfs.ko
 
 # --------------------------------------------------------------------------------------------------------
 say "10/10 tuning patches (memory, I/O, scheduler, network)"
+if [ "${WITH_TUNING:-true}" != true ]; then
+  echo "skipped (WITH_TUNING=false)"
+else
 # Audited one by one (see README). Left out on purpose:
 #   optimise_memcmp.patch              uses NEON q-registers inside kernel memcmp without kernel_neon_begin()
 #   add_timeout_wakelocks_globally     silently gives every userspace wakelock a 500 ms timeout
@@ -217,6 +225,7 @@ if sed -n '/^void pm_system_wakeup(void)/,/^}/p' drivers/base/power/wakeup.c | g
   sed -i '/^void pm_system_wakeup(void)/,/^}/{/suspend_abort_fs_sync();/d}' drivers/base/power/wakeup.c
 fi
 apply_patch "$WP/avoid_extra_s2idle_wake_attempts.patch" -F3
+fi
 
 say "integration finished"
 git -C "$K" status --short | head -60 || true

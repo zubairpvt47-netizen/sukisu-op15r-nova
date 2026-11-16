@@ -16,7 +16,15 @@ on:
         description: "Link-time optimisation"
         type: choice
         options: [thin, full, none]
-        default: thin
+        default: none
+      tuning:
+        description: "WildKernels tuning patches (18)"
+        type: boolean
+        default: true
+      unicode:
+        description: "Unicode bypass fix (experimental)"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -27,7 +35,7 @@ defaults:
     shell: bash
 
 concurrency:
-  group: build-${{ github.ref }}-${{ inputs.stage }}-${{ inputs.lto }}
+  group: build-${{ github.ref }}-${{ inputs.stage }}-${{ inputs.lto }}-${{ inputs.tuning }}-${{ inputs.unicode }}
   cancel-in-progress: false
 
 env:
@@ -38,7 +46,7 @@ env:
 
 jobs:
   kernel:
-    name: Kernel (6.12.69, ${{ inputs.stage }}, lto=${{ inputs.lto }})
+    name: Kernel (6.12.69, ${{ inputs.stage }}, lto=${{ inputs.lto }}, tuning=${{ inputs.tuning }}, unicode=${{ inputs.unicode }})
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     steps:
@@ -71,6 +79,9 @@ jobs:
 
       - name: Integrate SukiSU Nova, SUSFS, NoMount, Baseband Guard, NTSync, tuning
         run: bash scripts/integrate.sh
+        env:
+          WITH_TUNING: ${{ inputs.tuning }}
+          WITH_UNICODE: ${{ inputs.unicode }}
 
       - name: Fetch the SukiSU Nova manager and check it matches the kernel's trusted certificate
         run: |
@@ -126,7 +137,7 @@ jobs:
         if: always() && inputs.stage != 'dry-run'
         uses: actions/upload-artifact@v4
         with:
-          name: raw-image-lto-${{ inputs.lto }}
+          name: raw-image-lto-${{ inputs.lto }}-tuning-${{ inputs.tuning }}-unicode-${{ inputs.unicode }}
           path: work/raw/
           if-no-files-found: ignore
 
