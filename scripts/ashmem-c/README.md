@@ -7,7 +7,9 @@ android16-6.12-2025-12; `integrate.sh` swaps it in only when `LTO != none`.
 
 - `ashmem.c`, `ashmem.h`: unmodified, from kernel/common tag `android16-6.12-2025-12_r63`
   (drivers/staging/android/). Hashes are checked by integrate.sh.
-- `ashmem_exports.inc`: appended to ashmem.c; implements/exports is_ashmem_file, ashmem_area_name/size/vmfile.
+- `ashmem_exports.inc`: appended to ashmem.c; implements/exports is_ashmem_file, ashmem_area_name/size/vmfile, and
+  `ashmem_memfd_ioctl` (ashmem ioctls on memfd files). The 2026-03 `mm/shmem.c` references ashmem_memfd_ioctl
+  whenever CONFIG_ASHMEM=y (link error `undefined symbol: ashmem_memfd_ioctl` otherwise), so it is ported from the Rust driver.
 - `uapi/ashmem.h` is byte-identical between the two Google trees, so the tree's own copy is used.
 - Not provided (Rust driver only): the misc devices ashmem_unpinning_enable / ashmem_ignore_unset_prot_read /
   ashmem_ignore_unset_prot_exec. Their defaults equal the C driver's behaviour and AOSP init.rc does not write them.
