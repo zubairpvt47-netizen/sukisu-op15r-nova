@@ -39,6 +39,7 @@ while IFS= read -r line; do
   case "$val" in
     y) bash scripts/config --file "$DEFCONFIG" --enable "$key" ;;
     n) bash scripts/config --file "$DEFCONFIG" --disable "$key" ;;
+    \"*\") bash scripts/config --file "$DEFCONFIG" --set-str "$key" "${val//\"/}" ;;
     *) bash scripts/config --file "$DEFCONFIG" --set-val "$key" "$val" ;;
   esac
 done < <(cat "$HERE/config/required.txt" "$WORK/extra-config.txt")
@@ -88,6 +89,6 @@ if [ -f tools/bpf/resolve_btfids/Makefile ]; then
 fi
 
 # Kleaf wants a clean tree for stamping; commit what we changed (NoMount is a nested clone: keep it out)
-echo '/NoMount/' >> "$(git rev-parse --git-dir)/info/exclude"
+EXCL="$(git rev-parse --git-path info/exclude)"; mkdir -p "$(dirname "$EXCL")"; echo '/NoMount/' >> "$EXCL"
 git add -A . >/dev/null 2>&1 || true
 git -c user.name=ci -c user.email=ci@localhost commit -qm "sukisu-op15r-nova: integrated tree" || true
