@@ -69,7 +69,9 @@ python3 "$WILD_SCRIPTS/susfs_restore_context.py" "$PATCH" "$PWD"
 # adapts the patch to this sublevel's exec.c / task_mmu.c shape, then applies it with patch(1)
 python3 "$WILD_SCRIPTS/apply_susfs_compat.py" "$PWD" "$PATCH"
 python3 "$WILD_SCRIPTS/susfs_fdinfo_fanotify_arity.py" "$PWD"
-find . \( -name '*.rej' -o -name '*.orig' \) -not -path './.git/*' | grep -q . && die "SUSFS patch left rejects"
+# patch(1) leaves *.orig backups for hunks that applied with an offset: harmless. A *.rej is a failed hunk: fatal.
+if find . -name '*.rej' -not -path './.git/*' | grep -q .; then find . -name '*.rej' -not -path './.git/*' -exec cat {} +; die "SUSFS patch left rejects"; fi
+find . -name '*.orig' -not -path './.git/*' -delete
 # SUS_MAP/OPEN_REDIRECT use VMA_PAD_START() which older trees lack
 if grep -q 'VMA_PAD_START(' fs/proc/task_mmu.c && ! grep -qE 'pgsize_migration|define VMA_PAD_START' fs/proc/task_mmu.c; then
   sed -i '1a #ifndef VMA_PAD_START\n#define VMA_PAD_START(vma) ((vma)->vm_end)\n#endif' fs/proc/task_mmu.c
