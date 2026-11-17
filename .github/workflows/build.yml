@@ -166,7 +166,7 @@ jobs:
             [ "$(od -An -j4 -N1 -tu1 "$f" | tr -d ' ')" = 2 ] && [ "$(od -An -j18 -N2 -tu2 "$f" | tr -d ' ')" = 183 ] \
               || { echo "::error::$(basename "$f") in AnyKernel3 is not an aarch64 binary"; exit 1; }
           done
-          NAME="SukiSU-Nova-OP15R-6.12.69-$(date -u +%Y%m%d)"
+          NAME="SukiSU-Nova-OP15R-6.12.69-lto-${LTO}-$(date -u +%Y%m%d)"
           echo "ZIPNAME=$NAME" >> "$GITHUB_ENV"
           (cd "$WORK/AnyKernel3" && zip -r9q "$OUT/$NAME-AnyKernel3.zip" . -x '.git*')
           cp "$KROOT/bazel-bin/common/kernel_aarch64/Image" "$OUT/Image"
@@ -176,7 +176,7 @@ jobs:
         if: inputs.stage != 'dry-run'
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-6.12.69
+          name: kernel-6.12.69-lto-${{ inputs.lto }}
           path: out/
           retention-days: 30
 
@@ -196,7 +196,7 @@ jobs:
           set -euo pipefail
           source pins.env
           (cd "$OUT" && sha256sum * > SHA256SUMS.txt)
-          TAG="nova-6.12.69-$(date -u +%Y%m%d-%H%M)"
+          TAG="nova-6.12.69-lto-${LTO}-$(date -u +%Y%m%d-%H%M)"
           {
             echo "**Pre-release. Built and config-verified in CI; NOT boot-tested on a device.** Flash only with a way back (stock boot image backed up)."
             echo
