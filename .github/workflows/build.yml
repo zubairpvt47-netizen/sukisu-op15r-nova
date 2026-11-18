@@ -145,6 +145,20 @@ jobs:
           cp bazel-bin/common/kernel_aarch64/Image "$WORK/raw/Image"
           cp "$(find bazel-bin/common -name .config -path '*kernel_aarch64*' | head -1)" "$WORK/raw/final.config" || true
 
+      - name: Size report (sections and symbols of vmlinux, to compare LTO modes)
+        if: inputs.stage != 'dry-run'
+        working-directory: ${{ env.KROOT }}
+        run: |
+          BIN=$(dirname "$(ls -d prebuilts/clang/host/linux-x86/clang-*/bin/llvm-nm | sort | tail -1)")
+          V=$(find bazel-bin/common/kernel_aarch64 -maxdepth 1 -name vmlinux | head -1)
+          [ -n "$V" ] || V=$(find -L bazel-out -path '*kernel_aarch64*' -name vmlinux -size +10M 2>/dev/null | head -1)
+          echo "vmlinux: $V"
+          "$BIN/llvm-readelf" -S -W "$V" > "$WORK/raw/sections.txt"
+          "$BIN/llvm-nm" -S --size-sort -t d "$V" > "$WORK/raw/symbols.txt"
+          awk '{print $2}' "$WORK/raw/symbols.txt" | awk '{s+=$1} END{print "symbol bytes:",s}'
+          grep -E ' \.(text|rodata|data|bss) ' "$WORK/raw/sections.txt"
+          tail -40 "$WORK/raw/symbols.txt"
+
       # keep the compiled Image even if a later step (verify, packaging) fails
       - name: Upload raw Image
         if: always() && inputs.stage != 'dry-run'
