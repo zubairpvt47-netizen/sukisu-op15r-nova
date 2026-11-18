@@ -189,6 +189,17 @@ else
   echo "skipped (WITH_UNICODE=false)"
 fi
 
+# Full LTO: the kernel limits cross-file inlining only for ThinLTO ("-mllvm -import-instr-limit=5" is a ThinLTO
+# option), so full LTO inlines without bound. Seen 2026-11-17: same config, thin Image 46.3 MiB, full 53.4 MiB, and the
+# full one did not boot (phone fell to fastboot) while thin booted. Cap the link-time inliner for full LTO so the Image
+# stays at thin size; the workflow also refuses an Image above MAX_IMAGE_MIB.
+if [ "${LTO:-none}" = full ]; then
+  grep -q '^KBUILD_LDFLAGS += -mllvm -import-instr-limit=5$' Makefile || die "Makefile: import-instr-limit line not found"
+  sed -i "/^KBUILD_LDFLAGS += -mllvm -import-instr-limit=5\$/a ifdef CONFIG_LTO_CLANG_FULL\\nKBUILD_LDFLAGS += -mllvm -inline-threshold=${FULL_LTO_INLINE:-0}\\nendif" Makefile
+  grep -q "inline-threshold=${FULL_LTO_INLINE:-0}" Makefile || die "full-LTO inline cap not applied"
+  echo "full LTO: link-time inline threshold capped at ${FULL_LTO_INLINE:-0}"
+fi
+
 # --------------------------------------------------------------------------------------------------------
 say "9/10 networking: CIFS and BBR"
 # BBRv1 is the in-tree tcp_bbr. The BBRv3 backport (kernel_patches/common/bbrv3) is NOT applied: WildKernels disables it

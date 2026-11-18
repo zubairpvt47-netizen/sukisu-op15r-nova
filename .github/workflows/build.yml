@@ -16,7 +16,7 @@ on:
         description: "Link-time optimisation"
         type: choice
         options: [thin, full, none]
-        default: none
+        default: full
       tuning:
         description: "WildKernels tuning patches (18)"
         type: boolean
@@ -25,6 +25,14 @@ on:
         description: "Unicode bypass fix (experimental)"
         type: boolean
         default: true
+      full_lto_inline:
+        description: "Full LTO only: link-time inline threshold (0 = no extra cross-file inlining, like ThinLTO's limit)"
+        type: string
+        default: "0"
+      max_image_mib:
+        description: "Refuse an Image bigger than this (MiB); the booting thin build is 46.3"
+        type: string
+        default: "47"
 
 permissions:
   contents: write
@@ -46,7 +54,7 @@ env:
 
 jobs:
   kernel:
-    name: Kernel (6.12.69, ${{ inputs.stage }}, lto=${{ inputs.lto }}, tuning=${{ inputs.tuning }}, unicode=${{ inputs.unicode }})
+    name: Kernel (6.12.69, ${{ inputs.stage }}, lto=${{ inputs.lto }}, inline=${{ inputs.full_lto_inline }}, tuning=${{ inputs.tuning }}, unicode=${{ inputs.unicode }})
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     steps:
@@ -82,6 +90,7 @@ jobs:
         env:
           WITH_TUNING: ${{ inputs.tuning }}
           WITH_UNICODE: ${{ inputs.unicode }}
+          FULL_LTO_INLINE: ${{ inputs.full_lto_inline }}
 
       - name: Fetch the SukiSU Nova manager and check it matches the kernel's trusted certificate
         run: |
@@ -144,6 +153,22 @@ jobs:
           name: raw-image-lto-${{ inputs.lto }}-tuning-${{ inputs.tuning }}-unicode-${{ inputs.unicode }}
           path: work/raw/
           if-no-files-found: ignore
+
+      - name: Image size gate (an oversized full-LTO Image did not boot)
+        if: inputs.stage != 'dry-run'
+        env:
+          MAX_IMAGE_MIB: ${{ inputs.max_image_mib }}
+        run: |
+          python3 - "$WORK/raw/Image" <<'PY'
+          import os, struct, sys
+          d = open(sys.argv[1], 'rb').read(64)
+          assert d[56:60] == b'ARM\x64', 'not an arm64 Image'
+          size = struct.unpack('<Q', d[16:24])[0] / 2**20   # header image_size: file + BSS, what the bootloader reserves
+          lim = float(os.environ['MAX_IMAGE_MIB'])
+          print(f"Image: file {os.path.getsize(sys.argv[1])/2**20:.2f} MiB, image_size {size:.2f} MiB, limit {lim} MiB")
+          if size > lim:
+              print(f"::error::Image image_size {size:.2f} MiB > {lim} MiB (booting thin build: 46.25 MiB)"); sys.exit(1)
+          PY
 
       - name: Verify the built kernel against config/required.txt
         if: inputs.stage != 'dry-run'
