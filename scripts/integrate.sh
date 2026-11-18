@@ -195,7 +195,7 @@ fi
 # stays at thin size; the workflow also refuses an Image above MAX_IMAGE_MIB.
 if [ "${LTO:-none}" = full ]; then
   grep -q '^KBUILD_LDFLAGS += -mllvm -import-instr-limit=5$' Makefile || die "Makefile: import-instr-limit line not found"
-  sed -i "/^KBUILD_LDFLAGS += -mllvm -import-instr-limit=5\$/a ifdef CONFIG_LTO_CLANG_FULL\\nKBUILD_LDFLAGS += -mllvm -inline-threshold=${FULL_LTO_INLINE:-0}\\nendif" Makefile
+  sed -i "/^KBUILD_LDFLAGS += -mllvm -import-instr-limit=5\$/a ifdef CONFIG_LTO_CLANG_FULL\\nKBUILD_LDFLAGS += -mllvm -inline-threshold=${FULL_LTO_INLINE:-0} -mllvm -inlinehint-threshold=${FULL_LTO_INLINE:-0} -mllvm -hot-callsite-threshold=${FULL_LTO_INLINE:-0}\\nendif" Makefile
   grep -q "inline-threshold=${FULL_LTO_INLINE:-0}" Makefile || die "full-LTO inline cap not applied"
   echo "full LTO: link-time inline threshold capped at ${FULL_LTO_INLINE:-0}"
 fi
