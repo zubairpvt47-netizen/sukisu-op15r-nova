@@ -144,6 +144,7 @@ jobs:
           mkdir -p "$WORK/raw"
           cp bazel-bin/common/kernel_aarch64/Image "$WORK/raw/Image"
           cp "$(find bazel-bin/common -name .config -path '*kernel_aarch64*' | head -1)" "$WORK/raw/final.config" || true
+          cp "$(find bazel-bin/common -name Module.symvers | head -1)" "$WORK/raw/Module.symvers" || true
 
       - name: Size report (sections and symbols of vmlinux, to compare LTO modes)
         if: inputs.stage != 'dry-run'
