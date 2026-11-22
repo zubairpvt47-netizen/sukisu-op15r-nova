@@ -32,7 +32,12 @@ NOVA="$KROOT/KernelSU"
 # git). The Kleaf sandbox has no network and no stable git context, so compute the identical number here and
 # write it into the Makefile: the manager checks the kernel's version number.
 count=$(git -C "$NOVA" rev-list --count origin/main)
-KSU_VER=$((30000 + count - 4001))
+# Use the manager's own numbering (manager/build.gradle.kts getVersionCode: 3*10000 + commits + 996), so the kernel
+# reports the same 35xxx as the current manager release. Nova's kernel Makefile formula (30000 + commits - 4001) predates
+# the history reset of 'main' and now gives ~30007. The number is informational: feature gating uses the UAPI version
+# (6 in both the kernel and the manager), and ksud only checks that it is > 0.
+KSU_VER=$((30000 + count + 996))
+[ "$KSU_VER" -ge 35000 ] || die "unexpected Nova version $KSU_VER (origin/main has $count commits)"
 short=$(git -C "$NOVA" rev-parse --short=8 HEAD)
 echo "Nova version: $KSU_VER (origin/main has $count commits), commit $short"
 python3 - "$NOVA/kernel/Makefile" "$KSU_VER" "v3.0.0-$short@builtin-new" <<'PY'
