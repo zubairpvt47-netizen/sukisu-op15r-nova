@@ -5,7 +5,7 @@ set -uo pipefail
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 source "$HERE/pins.env"
 source "$HERE/scripts/lib.sh"
-: "${KROOT:?}" "${OUT:?OUT = directory to copy reports into}" "${LTO:=thin}"
+: "${KROOT:?}" "${OUT:?OUT = directory to copy reports into}" "${LTO:=full}"
 cd "$KROOT"
 mkdir -p "$OUT"
 fail=0
@@ -91,7 +91,51 @@ for other in (b"4359c171f32543394cbc23ef908c4bb94cad7c8087002ba164c8230948c21549
 sys.exit(0 if ok else 1)
 PY
 
-say "5. module symbol CRCs"
-if [ -n "$SYMVERS" ]; then echo "Module.symvers saved ($(wc -l < "$SYMVERS") symbols); compare against the stock vendor modules with tools/modabi.py"; fi
+say "5. exported symbol CRCs vs stock (Google's ABI file for this exact tree)"
+# The module loader's CRC check is bypassed (configure.sh), so nothing at insmod time would notice a vendor module
+# built against a struct layout this kernel changed. Compare every export's CRC with the one Google recorded in the
+# tree's ABI file (.stg, untouched by integrate.sh). Report only: a CRC can also move with no layout change, so a
+# difference is a lead to look at, not a verdict. Full list: $OUT/abi-crc-diff.txt
+if [ -n "$SYMVERS" ]; then
+  STG=$(find common/android common/gki -name '*.stg' 2>/dev/null | grep -E 'abi_gki_aarch64\.stg$|gki/aarch64/abi\.stg$' | head -1)
+  if [ -z "$STG" ]; then
+    echo "::warning::no GKI ABI .stg file found in the tree; CRC comparison skipped"
+  else
+    python3 -I - "$STG" "$SYMVERS" "$OUT/abi-crc-diff.txt" <<'PY' || echo "::warning::CRC comparison script failed (non-fatal)"
+import re, sys
+stg, symvers, out = sys.argv[1:4]
+stock = {}
+# STG text format: elf_symbol { id: .. name: "foo" ... crc: 0x1234abcd ... }
+for blk in re.finditer(r'elf_symbol\s*\{(.*?)\n\}', open(stg, encoding="utf-8", errors="replace").read(), flags=re.S):
+    b = blk.group(1)
+    n = re.search(r'\bname:\s*"([^"]+)"', b); c = re.search(r'\bcrc:\s*(0x[0-9a-fA-F]+)', b)
+    if n and c:
+        stock[n.group(1)] = int(c.group(1), 16)
+built = {}
+for line in open(symvers, encoding="utf-8", errors="replace"):
+    f = line.split("\t")
+    if len(f) >= 2 and f[0].startswith("0x"):
+        built[f[1]] = int(f[0], 16)
+print(f"stock ABI file : {stg} ({len(stock)} symbols with a CRC)")
+print(f"built kernel   : {len(built)} exports in Module.symvers")
+if not stock:
+    print("::warning::the ABI file carries no CRCs; comparison skipped"); sys.exit(0)
+common = sorted(set(stock) & set(built))
+diff = [s for s in common if stock[s] != built[s]]
+gone = sorted(set(stock) - set(built))
+with open(out, "w") as fh:
+    fh.write(f"# {len(common)} compared, {len(diff)} CRC differences, {len(gone)} stock exports missing from the build\n")
+    for s in diff: fh.write(f"CRC  {s}\tstock=0x{stock[s]:08x}\tbuilt=0x{built[s]:08x}\n")
+    for s in gone: fh.write(f"GONE {s}\n")
+print(f"compared {len(common)}: {len(diff)} CRC differences, {len(gone)} stock exports missing")
+for s in diff[:40]: print(f"  CRC  {s}")
+for s in gone[:20]: print(f"  GONE {s}")
+if diff or gone:
+    print(f"::warning::{len(diff)} export CRCs differ from stock and {len(gone)} stock exports are missing (see abi-crc-diff.txt)")
+PY
+  fi
+else
+  echo "::warning::Module.symvers not found; CRC comparison skipped"
+fi
 
 [ "$fail" = 0 ] && echo "ALL CHECKS PASSED" || { echo "SOME CHECKS FAILED"; exit 1; }

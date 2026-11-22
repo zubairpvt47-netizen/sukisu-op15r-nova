@@ -15,8 +15,8 @@ on:
       lto:
         description: "Link-time optimisation"
         type: choice
-        options: [thin, full, none]
-        default: thin
+        options: [full, thin, none]
+        default: full
 
 permissions:
   contents: write
