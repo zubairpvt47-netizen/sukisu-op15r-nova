@@ -100,51 +100,42 @@ else
   bad "no Module.symvers to check the ashmem exports against"
 fi
 
-say "5. exported symbol CRCs vs stock (Google's ABI file for this exact tree)"
-# The module loader's CRC check is bypassed (configure.sh), so nothing at insmod time would notice a vendor module
-# built against a struct layout this kernel changed. Compare every export's CRC with the one Google recorded in the
-# tree's ABI file (.stg, untouched by integrate.sh). Report only: a CRC can also move with no layout change, so a
-# difference is a lead to look at, not a verdict. Full list: $OUT/abi-crc-diff.txt
-if [ -n "$SYMVERS" ]; then
-  STG=$(find common/android common/gki -name '*.stg' 2>/dev/null | grep -E 'abi_gki_aarch64\.stg$|gki/aarch64/abi\.stg$' | head -1)
-  if [ -z "$STG" ]; then
-    echo "::warning::no GKI ABI .stg file found in the tree; CRC comparison skipped"
-  else
-    python3 -I - "$STG" "$SYMVERS" "$OUT/abi-crc-diff.txt" <<'PY' || echo "::warning::CRC comparison script failed (non-fatal)"
-import re, sys
-stg, symvers, out = sys.argv[1:4]
-stock = {}
-# STG text format: elf_symbol { id: .. name: "foo" ... crc: 0x1234abcd ... }
-for blk in re.finditer(r'elf_symbol\s*\{(.*?)\n\}', open(stg, encoding="utf-8", errors="replace").read(), flags=re.S):
-    b = blk.group(1)
-    n = re.search(r'\bname:\s*"([^"]+)"', b); c = re.search(r'\bcrc:\s*(0x[0-9a-fA-F]+)', b)
-    if n and c:
-        stock[n.group(1)] = int(c.group(1), 16)
-built = {}
-for line in open(symvers, encoding="utf-8", errors="replace"):
-    f = line.split("\t")
-    if len(f) >= 2 and f[0].startswith("0x"):
-        built[f[1]] = int(f[0], 16)
-print(f"stock ABI file : {stg} ({len(stock)} symbols with a CRC)")
-print(f"built kernel   : {len(built)} exports in Module.symvers")
-if not stock:
-    print("::warning::the ABI file carries no CRCs; comparison skipped"); sys.exit(0)
-common = sorted(set(stock) & set(built))
-diff = [s for s in common if stock[s] != built[s]]
-gone = sorted(set(stock) - set(built))
+say "5. exported symbol CRCs vs the boot-tested build"
+# The module loader's CRC check is bypassed (configure.sh). Google's ABI file is no reference: on this tree every one of
+# its ~10k CRCs differs for any rebuilt kernel (run 44992377848), so it cannot single anything out. Compare instead with
+# the Module.symvers of the full-LTO build that boots on the phone (release nova-6.12.69-lto-full-20261118-1655): any
+# changed or vanished export is something the vendor modules were not tested against. Report only; list in
+# $OUT/abi-crc-diff.txt
+REF="$HERE/reference/booting-lto-full-20261118.Module.symvers"
+if [ -n "$SYMVERS" ] && [ -f "$REF" ]; then
+  python3 -I - "$REF" "$SYMVERS" "$OUT/abi-crc-diff.txt" <<'PY' || echo "::warning::CRC comparison script failed (non-fatal)"
+import sys
+def load(p):
+    d = {}
+    for line in open(p, encoding="utf-8", errors="replace"):
+        f = line.split("\t")
+        if len(f) >= 2 and f[0].startswith("0x"):
+            d[f[1]] = int(f[0], 16)
+    return d
+ref, new, out = load(sys.argv[1]), load(sys.argv[2]), sys.argv[3]
+common = sorted(set(ref) & set(new))
+diff = [s for s in common if ref[s] != new[s]]
+gone = sorted(set(ref) - set(new)); added = sorted(set(new) - set(ref))
 with open(out, "w") as fh:
-    fh.write(f"# {len(common)} compared, {len(diff)} CRC differences, {len(gone)} stock exports missing from the build\n")
-    for s in diff: fh.write(f"CRC  {s}\tstock=0x{stock[s]:08x}\tbuilt=0x{built[s]:08x}\n")
+    fh.write(f"# vs boot-tested build: {len(common)} compared, {len(diff)} CRC changed, {len(gone)} gone, {len(added)} new\n")
+    for s in diff: fh.write(f"CRC  {s}\tbooting=0x{ref[s]:08x}\tbuilt=0x{new[s]:08x}\n")
     for s in gone: fh.write(f"GONE {s}\n")
-print(f"compared {len(common)}: {len(diff)} CRC differences, {len(gone)} stock exports missing")
+    for s in added: fh.write(f"NEW  {s}\n")
+print(f"boot-tested build: {len(ref)} exports, this build: {len(new)}")
+print(f"{len(diff)} CRC changed, {len(gone)} gone, {len(added)} new")
 for s in diff[:40]: print(f"  CRC  {s}")
 for s in gone[:20]: print(f"  GONE {s}")
+for s in added[:20]: print(f"  NEW  {s}")
 if diff or gone:
-    print(f"::warning::{len(diff)} export CRCs differ from stock and {len(gone)} stock exports are missing (see abi-crc-diff.txt)")
+    print(f"::warning::{len(diff)} export CRCs changed and {len(gone)} exports vanished compared with the boot-tested build (see abi-crc-diff.txt)")
 PY
-  fi
 else
-  echo "::warning::Module.symvers not found; CRC comparison skipped"
+  echo "::warning::Module.symvers or the reference file is missing; CRC comparison skipped"
 fi
 
 [ "$fail" = 0 ] && echo "ALL CHECKS PASSED" || { echo "SOME CHECKS FAILED"; exit 1; }
