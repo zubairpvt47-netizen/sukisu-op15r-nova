@@ -32,23 +32,15 @@ NOVA="$KROOT/KernelSU"
 # git). The Kleaf sandbox has no network and no stable git context, so compute the identical number here and
 # write it into the Makefile: the manager checks the kernel's version number.
 count=$(git -C "$NOVA" rev-list --count origin/main)
-KSU_VER=$((30000 + count - 4001))
+# Use the manager's own numbering (manager/build.gradle.kts getVersionCode: 3*10000 + commits + 996), so the kernel
+# reports the same 35xxx as the current manager release. Nova's kernel Makefile formula (30000 + commits - 4001) predates
+# the history reset of 'main' and now gives ~30007. The number is informational: feature gating uses the UAPI version
+# (6 in both the kernel and the manager), and ksud only checks that it is > 0.
+KSU_VER=$((30000 + count + 996))
+[ "$KSU_VER" -ge 35000 ] || die "unexpected Nova version $KSU_VER (origin/main has $count commits)"
 short=$(git -C "$NOVA" rev-parse --short=8 HEAD)
-echo "Nova version from origin/main: $KSU_VER (origin/main has $count commits), commit $short"
-# The manager APK is the source of truth: it computes versionCode = 30000 + commits + 996 from the very main it was built
-# from, the kernel computes 30000 + commits - 4001 from whatever main is today, so a newer main than the release APK
-# (or the reverse) makes the two disagree. The workflow downloads the APK first and passes its versionCode/versionName.
-TAG="v3.0.0"
-if [ -n "${MANAGER_VERSION_CODE:-}" ]; then
-  FROM_APK=$((MANAGER_VERSION_CODE - 996 - 4001))
-  [ "$FROM_APK" = "$KSU_VER" ] || echo "::warning::origin/main says $KSU_VER but the manager APK (versionCode $MANAGER_VERSION_CODE) says $FROM_APK: using the APK's"
-  KSU_VER=$FROM_APK
-  [ -n "${MANAGER_VERSION_NAME:-}" ] && TAG="$MANAGER_VERSION_NAME"
-  echo "kernel version pinned to the manager APK: $KSU_VER ($TAG)"
-else
-  echo "::warning::MANAGER_VERSION_CODE not set: kernel version comes from origin/main and may not match the manager"
-fi
-python3 - "$NOVA/kernel/Makefile" "$KSU_VER" "$TAG-$short@builtin-new" <<'PY'
+echo "Nova version: $KSU_VER (origin/main has $count commits), commit $short"
+python3 - "$NOVA/kernel/Makefile" "$KSU_VER" "v3.0.0-$short@builtin-new" <<'PY'
 import re, sys
 p, ver, full = sys.argv[1:4]
 s = open(p, encoding="utf-8").read()
@@ -154,6 +146,7 @@ clone_at "$BBG_REPO" "$KROOT/Baseband-guard" "$BBG_PIN"
   sh "$WORK/bbg-setup.sh" "$BBG_PIN" )
 [ "$(git -C "$KROOT/Baseband-guard" rev-parse HEAD)" = "$BBG_PIN" ] || die "Baseband Guard moved off its pin"
 # put it in the default LSM order
+# right after selinux: this is the order of release nova-6.12.69-20261116, boot-tested on the phone
 sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig
 grep -q 'baseband_guard' security/Kconfig || die "baseband_guard missing from the LSM order"
 # It is a static LSM, so it needs a slot: with only 5 slots (capability, selinux, safesetid, bpf, landlock) the
@@ -195,7 +188,22 @@ need_symbol NTSYNC
 
 # --------------------------------------------------------------------------------------------------------
 say "8/10 Unicode bypass fix (experimental, WildKernels)"
-apply_patch "$WP/unicode_bypass_fix_6.1+.patch"
+if [ "${WITH_UNICODE:-true}" = true ]; then
+  apply_patch "$WP/unicode_bypass_fix_6.1+.patch"
+else
+  echo "skipped (WITH_UNICODE=false)"
+fi
+
+# Full LTO: the kernel limits cross-file inlining only for ThinLTO ("-mllvm -import-instr-limit=5" is a ThinLTO
+# option), so full LTO inlines without bound. Seen 2026-11-17: same config, thin Image 46.3 MiB, full 53.4 MiB, and the
+# full one did not boot (phone fell to fastboot) while thin booted. Cap the link-time inliner for full LTO so the Image
+# stays at thin size; the workflow also refuses an Image above MAX_IMAGE_MIB.
+if [ "${LTO:-none}" = full ]; then
+  grep -q '^KBUILD_LDFLAGS += -mllvm -import-instr-limit=5$' Makefile || die "Makefile: import-instr-limit line not found"
+  sed -i "/^KBUILD_LDFLAGS += -mllvm -import-instr-limit=5\$/a ifdef CONFIG_LTO_CLANG_FULL\\nKBUILD_LDFLAGS += -mllvm -inline-threshold=${FULL_LTO_INLINE:-0} -mllvm -inlinehint-threshold=${FULL_LTO_INLINE:-0} -mllvm -hot-callsite-threshold=${FULL_LTO_INLINE:-0}\\nendif" Makefile
+  grep -q "inline-threshold=${FULL_LTO_INLINE:-0}" Makefile || die "full-LTO inline cap not applied"
+  echo "full LTO: link-time inline threshold capped at ${FULL_LTO_INLINE:-0}"
+fi
 
 # --------------------------------------------------------------------------------------------------------
 say "9/10 networking: CIFS and BBR"
@@ -210,10 +218,42 @@ python3 "$WILD_SCRIPTS/cifs_modules_fix.py" "$PWD" fs/netfs/netfs.ko
 if [ "${LTO:-none}" != none ]; then
   echo "LTO=$LTO: Rust is off, removing rust_binder.ko from the GKI module list"
   python3 "$WILD_SCRIPTS/cifs_modules_fix.py" "$PWD" drivers/android/binder/rust_binder.ko
+
+  # With LTO Kleaf trims the ksymtab to the KMI lists and, with kmi_symbol_list_strict_mode, fails the build if a listed
+  # symbol does not exist. Rust being off removes two groups of listed symbols:
+  #  - Pixel-only Rust binder symbols (gki/aarch64/symbols/pixel): not used by this phone, so drop them from the list.
+  #  - the ashmem driver and its four exports (gki/aarch64/symbols/oplus). The phone really uses /dev/ashmem (Android
+  #    keeps sys.use_memfd=false; ~2500 open ashmem fds seen), and 2026-03 only ships the Rust driver, so swap in
+  #    Google's C driver from android16-6.12-2025-12 (vendored in scripts/ashmem-c) plus the four exports.
+  PIXEL=gki/aarch64/symbols/pixel
+  [ -f "$PIXEL" ] || die "$PIXEL not found"
+  sed -i -E '/^[[:space:]]*(RUST_BINDER_LAYOUT|__(traceiter|tracepoint)_android_vh_rust_binder_[a-z_]+)[[:space:]]*$/d' "$PIXEL"
+  ! grep -qE 'rust_binder|RUST_BINDER' "$PIXEL" || die "Rust binder symbols still in $PIXEL"
+  echo "removed the Rust binder symbols from $PIXEL"
+
+  ASH=drivers/staging/android
+  AC="$HERE/scripts/ashmem-c"
+  for f in ashmem.rs ashmem_range.rs ashmem_shrinker.rs ashmem_toggle.rs shmem.rs ashmem_exports.c; do
+    [ -f "$ASH/$f" ] || die "$ASH/$f missing: the tree no longer has the Rust ashmem layout this swap expects"
+  done
+  [ "$(sha256sum < "$AC/ashmem.c" | cut -d' ' -f1)" = 63bd518d3e739ae6a190b4fc8ebf9359c8745d5e579c6cdf562a8c8776f56089 ] || die "scripts/ashmem-c/ashmem.c was modified"
+  [ "$(sha256sum < "$AC/ashmem.h" | cut -d' ' -f1)" = 94fef78c005a36c16a298a293b28f2a999cce016ce8399818f60b9ed9ea3a4f1 ] || die "scripts/ashmem-c/ashmem.h was modified"
+  # the uapi header must be the one both Google trees share (the C driver is written against it)
+  [ "$(sha256sum < "$ASH/uapi/ashmem.h" | cut -d' ' -f1)" = 32e4a2b6f0430e6607e36a1331c1d73661a1cd5e74262928bcbb4005ba571516 ] || die "$ASH/uapi/ashmem.h differs from the 2025-12 / 2026-03 header"
+  rm -f "$ASH/ashmem.rs" "$ASH/ashmem_range.rs" "$ASH/ashmem_shrinker.rs" "$ASH/ashmem_toggle.rs" "$ASH/shmem.rs" "$ASH/ashmem_exports.c"
+  cp "$AC/ashmem.c" "$AC/ashmem.h" "$ASH/"
+  cat "$AC/ashmem_exports.inc" >> "$ASH/ashmem.c"
+  grep -q '^	depends on SHMEM && RUST$' "$ASH/Kconfig" || die "$ASH/Kconfig: ASHMEM dependency line not found"
+  sed -i 's/^	depends on SHMEM && RUST$/	depends on SHMEM/' "$ASH/Kconfig"
+  printf '%s\n' '# SPDX-License-Identifier: GPL-2.0' 'ccflags-y += -I$(src)			# needed for trace events' '' 'obj-$(CONFIG_ASHMEM)		+= ashmem.o' > "$ASH/Makefile"
+  echo "ashmem: Rust driver replaced by the C driver (android16-6.12-2025-12_r63) + exports"
 fi
 
 # --------------------------------------------------------------------------------------------------------
 say "10/10 tuning patches (memory, I/O, scheduler, network)"
+if [ "${WITH_TUNING:-true}" != true ]; then
+  echo "skipped (WITH_TUNING=false)"
+else
 # Audited one by one (see README). Left out on purpose:
 #   optimise_memcmp.patch              uses NEON q-registers inside kernel memcmp without kernel_neon_begin()
 #   add_timeout_wakelocks_globally     silently gives every userspace wakelock a 500 ms timeout
@@ -237,6 +277,7 @@ if sed -n '/^void pm_system_wakeup(void)/,/^}/p' drivers/base/power/wakeup.c | g
   sed -i '/^void pm_system_wakeup(void)/,/^}/{/suspend_abort_fs_sync();/d}' drivers/base/power/wakeup.c
 fi
 apply_patch "$WP/avoid_extra_s2idle_wake_attempts.patch" -F3
+fi
 
 say "integration finished"
 git -C "$K" status --short | head -60 || true

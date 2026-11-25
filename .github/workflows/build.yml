@@ -17,6 +17,22 @@ on:
         type: choice
         options: [thin, full, none]
         default: full
+      tuning:
+        description: "WildKernels tuning patches (18)"
+        type: boolean
+        default: true
+      unicode:
+        description: "Unicode bypass fix (experimental)"
+        type: boolean
+        default: true
+      full_lto_inline:
+        description: "Full LTO only: link-time inline threshold (0 = no extra cross-file inlining, like ThinLTO's limit)"
+        type: string
+        default: "0"
+      max_image_mib:
+        description: "Refuse an Image bigger than this (MiB); the booting thin build is 46.3"
+        type: string
+        default: "47"
 
 permissions:
   contents: write
@@ -27,7 +43,7 @@ defaults:
     shell: bash
 
 concurrency:
-  group: build-${{ github.ref }}-${{ inputs.stage }}-${{ inputs.lto }}
+  group: build-${{ github.ref }}-${{ inputs.stage }}-${{ inputs.lto }}-${{ inputs.tuning }}-${{ inputs.unicode }}
   cancel-in-progress: false
 
 env:
@@ -38,7 +54,7 @@ env:
 
 jobs:
   kernel:
-    name: Kernel (6.12.69, ${{ inputs.stage }}, lto=${{ inputs.lto }})
+    name: Kernel (6.12.69, ${{ inputs.stage }}, lto=${{ inputs.lto }}, inline=${{ inputs.full_lto_inline }}, tuning=${{ inputs.tuning }}, unicode=${{ inputs.unicode }})
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     steps:
@@ -69,38 +85,27 @@ jobs:
       - name: Sync Google kernel source (pinned to the phone's commit)
         run: bash scripts/sync-source.sh
 
-      - name: Fetch the SukiSU Nova manager APK (its version decides the kernel's version number)
-        run: |
-          set -euo pipefail
-          sudo apt-get install -y -qq apksigner aapt
-          mkdir -p "$WORK/manager" "$OUT"
-          gh release download --repo SukiSU-Nova/SukiSU-Nova --pattern 'SukiSU_Nova_v*-release.apk' --dir "$WORK/manager" --clobber
-          APK=$(ls "$WORK/manager"/*.apk | head -1)
-          BADGE=$(aapt dump badging "$APK" | sed -n 1p)
-          CODE=$(echo "$BADGE" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")
-          NAME=$(echo "$BADGE" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
-          [ -n "$CODE" ] && [ -n "$NAME" ] || { echo "::error::cannot read versionCode/versionName from $APK"; exit 1; }
-          echo "manager APK: $(basename "$APK") versionCode=$CODE versionName=$NAME"
-          echo "MANAGER_VERSION_CODE=$CODE" >> "$GITHUB_ENV"
-          echo "MANAGER_VERSION_NAME=$NAME" >> "$GITHUB_ENV"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
       - name: Integrate SukiSU Nova, SUSFS, NoMount, Baseband Guard, NTSync, tuning
         run: bash scripts/integrate.sh
+        env:
+          WITH_TUNING: ${{ inputs.tuning }}
+          WITH_UNICODE: ${{ inputs.unicode }}
+          FULL_LTO_INLINE: ${{ inputs.full_lto_inline }}
 
-      - name: Check the SukiSU Nova manager APK matches the kernel's trusted certificate and version
+      - name: Fetch the SukiSU Nova manager and check it matches the kernel's trusted certificate
         run: |
           set -euo pipefail
+          sudo apt-get install -y -qq apksigner
+          mkdir -p "$WORK/manager" "$OUT"
+          gh release download --repo SukiSU-Nova/SukiSU-Nova --pattern 'SukiSU_Nova_v*-release.apk' --dir "$WORK/manager" --clobber
           APK=$(ls "$WORK/manager"/*.apk | head -1)
           CERT=$(apksigner verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
           WANT=$(sed -n 's/^KSU_EXPECTED_HASH := //p' "$KROOT/KernelSU/kernel/Makefile")
           echo "manager: $(basename "$APK")"; echo "apk cert : $CERT"; echo "kernel   : $WANT"
           [ -n "$CERT" ] && [ "$CERT" = "$WANT" ] || { echo "::error::manager APK certificate does not match the kernel's compiled-in one"; exit 1; }
-          KVER=$(sed -n 's/^KSU_VERSION := //p' "$KROOT/KernelSU/kernel/Makefile")
-          [ "$((MANAGER_VERSION_CODE - 996 - 4001))" = "$KVER" ] || { echo "::error::kernel version $KVER does not match manager versionCode $MANAGER_VERSION_CODE"; exit 1; }
-          echo "version  : manager $MANAGER_VERSION_NAME / $MANAGER_VERSION_CODE  <->  kernel $KVER"
           cp "$APK" "$OUT/"
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Configure (defconfig, module compatibility, release string)
         run: bash scripts/configure.sh
@@ -126,6 +131,10 @@ jobs:
           tools/bazel build --config=fast --lto="$LTO" --disk_cache="$HOME/.cache/bazel" //common:kernel_aarch64_config 2>&1 | tail -30
           CONFIG_ONLY=1 bash "$GITHUB_WORKSPACE/scripts/verify.sh" 2>&1 | tee "$OUT/config-check.log"
 
+      - name: LTO diagnostics (read-only)
+        if: always() && inputs.lto != 'none'
+        run: bash scripts/diag-lto.sh 2>&1 | tee "$OUT/lto-diag.log"
+
       - name: Build kernel (Kleaf / Bazel)
         if: inputs.stage != 'dry-run'
         working-directory: ${{ env.KROOT }}
@@ -135,15 +144,46 @@ jobs:
           mkdir -p "$WORK/raw"
           cp bazel-bin/common/kernel_aarch64/Image "$WORK/raw/Image"
           cp "$(find bazel-bin/common -name .config -path '*kernel_aarch64*' | head -1)" "$WORK/raw/final.config" || true
+          cp "$(find bazel-bin/common -name Module.symvers | head -1)" "$WORK/raw/Module.symvers" || true
+
+      - name: Size report (sections and symbols of vmlinux, to compare LTO modes)
+        if: inputs.stage != 'dry-run'
+        working-directory: ${{ env.KROOT }}
+        run: |
+          BIN=$(dirname "$(ls -d prebuilts/clang/host/linux-x86/clang-*/bin/llvm-nm | sort | tail -1)")
+          V=$(find bazel-bin/common/kernel_aarch64 -maxdepth 1 -name vmlinux | head -1)
+          [ -n "$V" ] || V=$(find -L bazel-out -path '*kernel_aarch64*' -name vmlinux -size +10M 2>/dev/null | head -1)
+          echo "vmlinux: $V"
+          "$BIN/llvm-readelf" -S -W "$V" > "$WORK/raw/sections.txt"
+          "$BIN/llvm-nm" -S --size-sort -t d "$V" > "$WORK/raw/symbols.txt"
+          awk '{print $2}' "$WORK/raw/symbols.txt" | awk '{s+=$1} END{print "symbol bytes:",s}'
+          grep -E ' \.(text|rodata|data|bss) ' "$WORK/raw/sections.txt"
+          tail -40 "$WORK/raw/symbols.txt"
 
       # keep the compiled Image even if a later step (verify, packaging) fails
       - name: Upload raw Image
         if: always() && inputs.stage != 'dry-run'
         uses: actions/upload-artifact@v4
         with:
-          name: raw-image-lto-${{ inputs.lto }}
+          name: raw-image-lto-${{ inputs.lto }}-tuning-${{ inputs.tuning }}-unicode-${{ inputs.unicode }}
           path: work/raw/
           if-no-files-found: ignore
+
+      - name: Image size gate (an oversized full-LTO Image did not boot)
+        if: inputs.stage != 'dry-run'
+        env:
+          MAX_IMAGE_MIB: ${{ inputs.max_image_mib }}
+        run: |
+          python3 - "$WORK/raw/Image" <<'PY'
+          import os, struct, sys
+          d = open(sys.argv[1], 'rb').read(64)
+          assert d[56:60] == b'ARM\x64', 'not an arm64 Image'
+          size = struct.unpack('<Q', d[16:24])[0] / 2**20   # header image_size: file + BSS, what the bootloader reserves
+          lim = float(os.environ['MAX_IMAGE_MIB'])
+          print(f"Image: file {os.path.getsize(sys.argv[1])/2**20:.2f} MiB, image_size {size:.2f} MiB, limit {lim} MiB")
+          if size > lim:
+              print(f"::error::Image image_size {size:.2f} MiB > {lim} MiB (booting thin build: 46.25 MiB)"); sys.exit(1)
+          PY
 
       - name: Verify the built kernel against config/required.txt
         if: inputs.stage != 'dry-run'
@@ -166,7 +206,7 @@ jobs:
             [ "$(od -An -j4 -N1 -tu1 "$f" | tr -d ' ')" = 2 ] && [ "$(od -An -j18 -N2 -tu2 "$f" | tr -d ' ')" = 183 ] \
               || { echo "::error::$(basename "$f") in AnyKernel3 is not an aarch64 binary"; exit 1; }
           done
-          NAME="SukiSU-Nova-OP15R-6.12.69-$(date -u +%Y%m%d)"
+          NAME="SukiSU-Nova-OP15R-6.12.69-lto-${LTO}-$(date -u +%Y%m%d)"
           echo "ZIPNAME=$NAME" >> "$GITHUB_ENV"
           (cd "$WORK/AnyKernel3" && zip -r9q "$OUT/$NAME-AnyKernel3.zip" . -x '.git*')
           cp "$KROOT/bazel-bin/common/kernel_aarch64/Image" "$OUT/Image"
@@ -176,7 +216,7 @@ jobs:
         if: inputs.stage != 'dry-run'
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-6.12.69
+          name: kernel-6.12.69-lto-${{ inputs.lto }}
           path: out/
           retention-days: 30
 
@@ -196,7 +236,7 @@ jobs:
           set -euo pipefail
           source pins.env
           (cd "$OUT" && sha256sum * > SHA256SUMS.txt)
-          TAG="nova-6.12.69-$(date -u +%Y%m%d-%H%M)"
+          TAG="nova-6.12.69-lto-${LTO}-$(date -u +%Y%m%d-%H%M)"
           {
             echo "**Pre-release. Built and config-verified in CI; NOT boot-tested on a device.** Flash only with a way back (stock boot image backed up)."
             echo

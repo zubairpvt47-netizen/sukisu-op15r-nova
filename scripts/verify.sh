@@ -5,7 +5,7 @@ set -uo pipefail
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 source "$HERE/pins.env"
 source "$HERE/scripts/lib.sh"
-: "${KROOT:?}" "${OUT:?OUT = directory to copy reports into}" "${LTO:=thin}"
+: "${KROOT:?}" "${OUT:?OUT = directory to copy reports into}" "${LTO:=full}"
 cd "$KROOT"
 mkdir -p "$OUT"
 fail=0
@@ -91,7 +91,51 @@ for other in (b"4359c171f32543394cbc23ef908c4bb94cad7c8087002ba164c8230948c21549
 sys.exit(0 if ok else 1)
 PY
 
-say "5. module symbol CRCs"
-if [ -n "$SYMVERS" ]; then echo "Module.symvers saved ($(wc -l < "$SYMVERS") symbols); compare against the stock vendor modules with tools/modabi.py"; fi
+say "4b. ashmem symbols the OnePlus vendor modules import (real Rust driver, or the LTO stand-ins)"
+if [ -n "$SYMVERS" ]; then
+  for sym in is_ashmem_file ashmem_area_name ashmem_area_size ashmem_area_vmfile; do
+    grep -qE "[[:space:]]${sym}[[:space:]]" "$SYMVERS" && echo "ok: $sym exported" || bad "$sym not exported (oplus vendor modules may need it)"
+  done
+else
+  bad "no Module.symvers to check the ashmem exports against"
+fi
+
+say "5. exported symbol CRCs vs the boot-tested build"
+# The module loader's CRC check is bypassed (configure.sh). Google's ABI file is no reference: on this tree every one of
+# its ~10k CRCs differs for any rebuilt kernel (run 44992377848), so it cannot single anything out. Compare instead with
+# the Module.symvers of the full-LTO build that boots on the phone (release nova-6.12.69-lto-full-20261118-1655): any
+# changed or vanished export is something the vendor modules were not tested against. Report only; list in
+# $OUT/abi-crc-diff.txt
+REF="$HERE/reference/booting-lto-full-20261118.Module.symvers"
+if [ -n "$SYMVERS" ] && [ -f "$REF" ]; then
+  python3 -I - "$REF" "$SYMVERS" "$OUT/abi-crc-diff.txt" <<'PY' || echo "::warning::CRC comparison script failed (non-fatal)"
+import sys
+def load(p):
+    d = {}
+    for line in open(p, encoding="utf-8", errors="replace"):
+        f = line.split("\t")
+        if len(f) >= 2 and f[0].startswith("0x"):
+            d[f[1]] = int(f[0], 16)
+    return d
+ref, new, out = load(sys.argv[1]), load(sys.argv[2]), sys.argv[3]
+common = sorted(set(ref) & set(new))
+diff = [s for s in common if ref[s] != new[s]]
+gone = sorted(set(ref) - set(new)); added = sorted(set(new) - set(ref))
+with open(out, "w") as fh:
+    fh.write(f"# vs boot-tested build: {len(common)} compared, {len(diff)} CRC changed, {len(gone)} gone, {len(added)} new\n")
+    for s in diff: fh.write(f"CRC  {s}\tbooting=0x{ref[s]:08x}\tbuilt=0x{new[s]:08x}\n")
+    for s in gone: fh.write(f"GONE {s}\n")
+    for s in added: fh.write(f"NEW  {s}\n")
+print(f"boot-tested build: {len(ref)} exports, this build: {len(new)}")
+print(f"{len(diff)} CRC changed, {len(gone)} gone, {len(added)} new")
+for s in diff[:40]: print(f"  CRC  {s}")
+for s in gone[:20]: print(f"  GONE {s}")
+for s in added[:20]: print(f"  NEW  {s}")
+if diff or gone:
+    print(f"::warning::{len(diff)} export CRCs changed and {len(gone)} exports vanished compared with the boot-tested build (see abi-crc-diff.txt)")
+PY
+else
+  echo "::warning::Module.symvers or the reference file is missing; CRC comparison skipped"
+fi
 
 [ "$fail" = 0 ] && echo "ALL CHECKS PASSED" || { echo "SOME CHECKS FAILED"; exit 1; }

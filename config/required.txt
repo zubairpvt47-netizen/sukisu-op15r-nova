@@ -5,8 +5,7 @@
 
 # ---- SukiSU Nova (in-tree) ----------------------------------------------------------------------------
 CONFIG_KSU=y
-# KPM disabled (owner 2026-11-16): first full build did not boot, KPM patches kernel code at runtime
-CONFIG_KPM=n
+CONFIG_KPM=y
 CONFIG_KSU_LSM_SECURITY_HOOKS=y
 CONFIG_KSU_FEATURE_ADBROOT=y
 
@@ -97,6 +96,12 @@ CONFIG_FUSE_BPF=y
 
 # LTO is chosen by the Bazel --lto flag, so verify.sh checks CONFIG_LTO_CLANG_<mode> separately.
 
+# ---- module loading: must be OFF, or the Google-signed GKI modules (rfkill -> Wi-Fi/BT) are refused ----
+CONFIG_MODULE_SIG_PROTECT=n
+
 # ---- binder: the C driver must stay built in (with LTO, Rust and rust_binder.ko are off) ----
 CONFIG_ANDROID_BINDER_IPC=y
 CONFIG_ANDROID_BINDERFS=y
+
+# ---- ashmem: the phone really uses /dev/ashmem (Android keeps sys.use_memfd=false); every build, LTO or not, must have it ----
+CONFIG_ASHMEM=y
