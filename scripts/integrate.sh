@@ -39,8 +39,20 @@ count=$(git -C "$NOVA" rev-list --count origin/main)
 KSU_VER=$((30000 + count + 996))
 [ "$KSU_VER" -ge 35000 ] || die "unexpected Nova version $KSU_VER (origin/main has $count commits)"
 short=$(git -C "$NOVA" rev-parse --short=8 HEAD)
-echo "Nova version: $KSU_VER (origin/main has $count commits), commit $short"
-python3 - "$NOVA/kernel/Makefile" "$KSU_VER" "v3.0.0-$short@builtin-new" <<'PY'
+echo "Nova version from origin/main: $KSU_VER (origin/main has $count commits), commit $short"
+# The manager APK that ships with the kernel is the source of truth. It was built from the main of its release day, while
+# origin/main keeps growing (run 45561329951: APK 35000, main already 35004), so the workflow downloads the APK first and
+# passes its versionCode/versionName: kernel and manager then report exactly the same number.
+TAG="v3.0.0"
+if [ -n "${MANAGER_VERSION_CODE:-}" ]; then
+  [ "$MANAGER_VERSION_CODE" = "$KSU_VER" ] || echo "::warning::origin/main says $KSU_VER, the manager APK says $MANAGER_VERSION_CODE: using the APK's"
+  KSU_VER=$MANAGER_VERSION_CODE
+  [ -n "${MANAGER_VERSION_NAME:-}" ] && TAG="$MANAGER_VERSION_NAME"
+  echo "kernel version = manager APK: $KSU_VER ($TAG)"
+else
+  echo "::warning::MANAGER_VERSION_CODE not set: kernel version comes from origin/main and may not match the manager"
+fi
+python3 - "$NOVA/kernel/Makefile" "$KSU_VER" "$TAG-$short@builtin-new" <<'PY'
 import re, sys
 p, ver, full = sys.argv[1:4]
 s = open(p, encoding="utf-8").read()

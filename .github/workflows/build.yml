@@ -85,6 +85,23 @@ jobs:
       - name: Sync Google kernel source (pinned to the phone's commit)
         run: bash scripts/sync-source.sh
 
+      - name: Fetch the SukiSU Nova manager APK (its versionCode becomes the kernel's version number)
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq apksigner aapt
+          mkdir -p "$WORK/manager" "$OUT"
+          gh release download --repo SukiSU-Nova/SukiSU-Nova --pattern 'SukiSU_Nova_v*-release.apk' --dir "$WORK/manager" --clobber
+          APK=$(ls "$WORK/manager"/*.apk | head -1)
+          BADGE=$(aapt dump badging "$APK" | sed -n 1p)
+          CODE=$(echo "$BADGE" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")
+          NAME=$(echo "$BADGE" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+          [ -n "$CODE" ] && [ -n "$NAME" ] || { echo "::error::cannot read versionCode/versionName from $APK"; exit 1; }
+          echo "manager APK: $(basename "$APK") versionCode=$CODE versionName=$NAME"
+          echo "MANAGER_VERSION_CODE=$CODE" >> "$GITHUB_ENV"
+          echo "MANAGER_VERSION_NAME=$NAME" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Integrate SukiSU Nova, SUSFS, NoMount, Baseband Guard, NTSync, tuning
         run: bash scripts/integrate.sh
         env:
@@ -92,12 +109,9 @@ jobs:
           WITH_UNICODE: ${{ inputs.unicode }}
           FULL_LTO_INLINE: ${{ inputs.full_lto_inline }}
 
-      - name: Fetch the SukiSU Nova manager and check it matches the kernel's trusted certificate
+      - name: Check the manager APK matches the kernel's trusted certificate and version number
         run: |
           set -euo pipefail
-          sudo apt-get install -y -qq apksigner aapt
-          mkdir -p "$WORK/manager" "$OUT"
-          gh release download --repo SukiSU-Nova/SukiSU-Nova --pattern 'SukiSU_Nova_v*-release.apk' --dir "$WORK/manager" --clobber
           APK=$(ls "$WORK/manager"/*.apk | head -1)
           CERT=$(apksigner verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
           WANT=$(sed -n 's/^KSU_EXPECTED_HASH := //p' "$KROOT/KernelSU/kernel/Makefile")
