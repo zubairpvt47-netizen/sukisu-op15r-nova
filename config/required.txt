@@ -96,3 +96,7 @@ CONFIG_BPF_JIT=y
 CONFIG_FUSE_BPF=y
 
 # LTO is chosen by the Bazel --lto flag, so verify.sh checks CONFIG_LTO_CLANG_<mode> separately.
+
+# ---- binder: the C driver must stay built in (with LTO, Rust and rust_binder.ko are off) ----
+CONFIG_ANDROID_BINDER_IPC=y
+CONFIG_ANDROID_BINDERFS=y

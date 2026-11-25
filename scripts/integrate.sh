@@ -34,8 +34,21 @@ NOVA="$KROOT/KernelSU"
 count=$(git -C "$NOVA" rev-list --count origin/main)
 KSU_VER=$((30000 + count - 4001))
 short=$(git -C "$NOVA" rev-parse --short=8 HEAD)
-echo "Nova version: $KSU_VER (origin/main has $count commits), commit $short"
-python3 - "$NOVA/kernel/Makefile" "$KSU_VER" "v3.0.0-$short@builtin-new" <<'PY'
+echo "Nova version from origin/main: $KSU_VER (origin/main has $count commits), commit $short"
+# The manager APK is the source of truth: it computes versionCode = 30000 + commits + 996 from the very main it was built
+# from, the kernel computes 30000 + commits - 4001 from whatever main is today, so a newer main than the release APK
+# (or the reverse) makes the two disagree. The workflow downloads the APK first and passes its versionCode/versionName.
+TAG="v3.0.0"
+if [ -n "${MANAGER_VERSION_CODE:-}" ]; then
+  FROM_APK=$((MANAGER_VERSION_CODE - 996 - 4001))
+  [ "$FROM_APK" = "$KSU_VER" ] || echo "::warning::origin/main says $KSU_VER but the manager APK (versionCode $MANAGER_VERSION_CODE) says $FROM_APK: using the APK's"
+  KSU_VER=$FROM_APK
+  [ -n "${MANAGER_VERSION_NAME:-}" ] && TAG="$MANAGER_VERSION_NAME"
+  echo "kernel version pinned to the manager APK: $KSU_VER ($TAG)"
+else
+  echo "::warning::MANAGER_VERSION_CODE not set: kernel version comes from origin/main and may not match the manager"
+fi
+python3 - "$NOVA/kernel/Makefile" "$KSU_VER" "$TAG-$short@builtin-new" <<'PY'
 import re, sys
 p, ver, full = sys.argv[1:4]
 s = open(p, encoding="utf-8").read()
@@ -191,6 +204,13 @@ say "9/10 networking: CIFS and BBR"
 # prebuilt vendor modules were compiled against; the module CRC bypass would hide a layout mismatch.
 # CIFS=y pulls NETFS_SUPPORT=y; Kleaf fails if its GKI module list still names fs/netfs/netfs.ko.
 python3 "$WILD_SCRIPTS/cifs_modules_fix.py" "$PWD" fs/netfs/netfs.ko
+# LTO: 6.12's RUST "depends on !DEBUG_INFO_BTF || (PAHOLE_HAS_LANG_EXCLUDE && !LTO)", and BTF stays on (eBPF), so any
+# LTO turns Rust off and rust_binder.ko is never built; drop it from Kleaf's module list. The built-in C binder
+# (CONFIG_ANDROID_BINDER_IPC=y, as in stock) serves binder instead.
+if [ "${LTO:-none}" != none ]; then
+  echo "LTO=$LTO: Rust is off, removing rust_binder.ko from the GKI module list"
+  python3 "$WILD_SCRIPTS/cifs_modules_fix.py" "$PWD" drivers/android/binder/rust_binder.ko
+fi
 
 # --------------------------------------------------------------------------------------------------------
 say "10/10 tuning patches (memory, I/O, scheduler, network)"
