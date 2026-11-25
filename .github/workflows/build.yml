@@ -95,7 +95,7 @@ jobs:
       - name: Fetch the SukiSU Nova manager and check it matches the kernel's trusted certificate
         run: |
           set -euo pipefail
-          sudo apt-get install -y -qq apksigner
+          sudo apt-get install -y -qq apksigner aapt
           mkdir -p "$WORK/manager" "$OUT"
           gh release download --repo SukiSU-Nova/SukiSU-Nova --pattern 'SukiSU_Nova_v*-release.apk' --dir "$WORK/manager" --clobber
           APK=$(ls "$WORK/manager"/*.apk | head -1)
@@ -103,6 +103,11 @@ jobs:
           WANT=$(sed -n 's/^KSU_EXPECTED_HASH := //p' "$KROOT/KernelSU/kernel/Makefile")
           echo "manager: $(basename "$APK")"; echo "apk cert : $CERT"; echo "kernel   : $WANT"
           [ -n "$CERT" ] && [ "$CERT" = "$WANT" ] || { echo "::error::manager APK certificate does not match the kernel's compiled-in one"; exit 1; }
+          # the number the manager shows and the number the kernel reports must be identical
+          MCODE=$(aapt dump badging "$APK" | sed -n "s/^package:.*versionCode='\([0-9]*\)'.*/\1/p")
+          KVER=$(sed -n 's/^KSU_VERSION := //p' "$KROOT/KernelSU/kernel/Makefile")
+          echo "manager versionCode: $MCODE   kernel KSU_VERSION: $KVER"
+          [ -n "$MCODE" ] && [ "$MCODE" = "$KVER" ] || { echo "::error::manager versionCode ($MCODE) differs from the kernel's KSU_VERSION ($KVER): upstream main moved after this APK was built"; exit 1; }
           cp "$APK" "$OUT/"
         env:
           GH_TOKEN: ${{ github.token }}
